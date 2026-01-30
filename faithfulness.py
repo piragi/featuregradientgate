@@ -503,10 +503,10 @@ def evaluate_and_report_faithfulness(
     dataset_config = get_dataset_config(config.file.dataset_name)
 
     # Build results structure
-    results = _build_results_structure(config, faithfulness_results, class_labels, dataset_config)
+    results = _build_results_structure(config, faithfulness_results, class_labels)
 
     # Print summary
-    _print_faithfulness_summary(results['metrics'], dataset_config)
+    _print_faithfulness_summary(results['metrics'])
 
     # Save results
     _save_faithfulness_results(config, faithfulness_results, class_labels, results)
@@ -636,7 +636,6 @@ class PatchPixelFlipping:
                     y_batch=y_batch[start:end],
                     a_batch=a_batch[start:end],
                     device=device,
-                    **kwargs
                 )
             )
 

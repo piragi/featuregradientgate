@@ -10,6 +10,7 @@ import torch
 
 def compute_feature_gradient_gate(
     residual_grad: torch.Tensor,
+    residual: Optional[torch.Tensor],
     sae_codes: torch.Tensor,
     sae_decoder: torch.Tensor,
     kappa: float = 3.0,
@@ -72,54 +73,65 @@ def compute_feature_gradient_gate(
         contributions = sae_codes * feature_grads  # [n_patches, n_features]
         s_t = contributions.sum(dim=1)  # [n_patches]
 
+    elif gate_construction == "no_SAE":
+        if residual is None:
+            raise ValueError("residual must be provided for no_SAE gate construction")
+        contributions = residual_grad * residual  # [n_patches, d_model]
+        s_t = contributions.sum(dim=1)
+
     else:
         raise ValueError(f"Unknown gate_construction type: {gate_construction}")
 
     # Normalize across patches (z-score normalization)
     s_median = s_t.median()
     s_mad = (s_t - s_median).abs().median() + 1e-8
-
     s_norm = (s_t - s_median) / (1.4826 * s_mad)
-
     # Symmetric exponential mapping: gate = clamp_max^(tanh(kappa * s_norm))
     # Range: [1/clamp_max, clamp_max], centered at 1
-    gate = torch.exp(
-        torch.log(torch.tensor(clamp_max, device=s_norm.device, dtype=s_norm.dtype)) * torch.tanh(kappa * s_norm)
-    )
+    # gate = torch.exp(
+    # torch.log(torch.tensor(clamp_max, device=s_norm.device, dtype=s_norm.dtype)) * torch.tanh(kappa * s_norm)
+    # )
+    # s_norm = (s_t - s_t.mean()) / (s_t.std() + 1e-8)
+    # s_norm = s_norm.clamp(-1, 1)
+    gate = 10 ** torch.tanh(s_norm)
     gate = gate.detach()
+
 
     # Collect debug information
     debug_info = {}
     if debug:
-        # Collect sparse features (activation > threshold)
-        active_mask = sae_codes > active_feature_threshold
-        sparse_indices = []
-        sparse_activations = []
-        sparse_gradients = []
-        sparse_contributions = []
-
-        for patch_idx in range(sae_codes.shape[0]):
-            mask = active_mask[patch_idx]
-            indices = torch.where(mask)[0]
-            sparse_indices.append(indices.detach().cpu().numpy())
-            sparse_activations.append(sae_codes[patch_idx, mask].detach().cpu().numpy())
-            sparse_gradients.append(feature_grads[patch_idx, mask].detach().cpu().numpy())
-            sparse_contributions.append(contributions[patch_idx, mask].detach().cpu().numpy())
-
         # Compute total contribution magnitude per patch (for cancellation analysis)
         total_contribution_magnitude = torch.abs(contributions).sum(dim=1)  # [n_patches]
 
         debug_info = {
             'gate_values': gate.detach().cpu().numpy(),
-            'sparse_features_indices': sparse_indices,
-            'sparse_features_activations': sparse_activations,
-            'sparse_features_gradients': sparse_gradients,
-            'sparse_features_contributions': sparse_contributions,
             'contribution_sum': s_t.detach().cpu().numpy(),  # Net sum (can be canceled)
             'total_contribution_magnitude': total_contribution_magnitude.detach().cpu().numpy(),  # Total magnitude
             'mean_gate': gate.mean().item(),
             'std_gate': gate.std().item(),
         }
+
+        # Collect sparse features only for SAE-based gate constructions
+        # (no_SAE uses d_model-sized contributions, not n_features-sized)
+        if gate_construction != "no_SAE":
+            active_mask = sae_codes > active_feature_threshold
+            sparse_indices = []
+            sparse_activations = []
+            sparse_gradients = []
+            sparse_contributions = []
+
+            for patch_idx in range(sae_codes.shape[0]):
+                mask = active_mask[patch_idx]
+                indices = torch.where(mask)[0]
+                sparse_indices.append(indices.detach().cpu().numpy())
+                sparse_activations.append(sae_codes[patch_idx, mask].detach().cpu().numpy())
+                sparse_gradients.append(feature_grads[patch_idx, mask].detach().cpu().numpy())
+                sparse_contributions.append(contributions[patch_idx, mask].detach().cpu().numpy())
+
+            debug_info['sparse_features_indices'] = sparse_indices
+            debug_info['sparse_features_activations'] = sparse_activations
+            debug_info['sparse_features_gradients'] = sparse_gradients
+            debug_info['sparse_features_contributions'] = sparse_contributions
     else:
         debug_info = {
             'mean_gate': gate.mean().item(),
@@ -132,6 +144,7 @@ def compute_feature_gradient_gate(
 def apply_feature_gradient_gating(
     cam_pos_avg: torch.Tensor,
     residual_grad: torch.Tensor,
+    residual: Optional[torch.Tensor],
     sae_codes: torch.Tensor,
     sae: Any,
     config: Optional[Dict[str, Any]] = None,
@@ -179,6 +192,7 @@ def apply_feature_gradient_gating(
     # Compute feature gradient gate
     feature_gate, feature_debug = compute_feature_gradient_gate(
         residual_grad=residual_grad,
+        residual=residual,
         sae_codes=sae_codes,
         sae_decoder=decoder,
         kappa=kappa,

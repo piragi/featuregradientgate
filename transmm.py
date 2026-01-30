@@ -25,21 +25,14 @@ def apply_gradient_gating_to_cam(
     if resid_grad_key not in gradients or layer_idx not in residuals:
         return cam_pos_avg, {}
 
-    # Get gradient and residual - already on CPU from hooks
-    residual_grad_cpu = gradients[resid_grad_key]
-    residual_tensor_cpu = residuals[layer_idx]
+    # Get gradient and residual (already on GPU from hooks)
+    residual_grad = gradients[resid_grad_key]
+    residual_tensor = residuals[layer_idx]
     sae = steering_resources[layer_idx]["sae"]
 
     # Compute SAE codes on-demand
     with torch.no_grad():
-        residual_tensor_gpu = residual_tensor_cpu.to(device)
-        _, codes = sae.encode(residual_tensor_gpu)
-        codes = codes.detach().cpu()
-        del residual_tensor_gpu
-
-    # Move gradient to GPU for computation
-    residual_grad = residual_grad_cpu.to(device)
-    codes_gpu = codes.to(device)
+        _, codes_gpu = sae.encode(residual_tensor)
 
     if residual_grad.dim() == 3:
         residual_grad = residual_grad[0]
@@ -63,6 +56,7 @@ def apply_gradient_gating_to_cam(
     gated_cam, layer_debug = apply_feature_gradient_gating(
         cam_pos_avg=cam_pos_avg,
         residual_grad=residual_grad,
+        residual=residual_tensor[0][1:],
         sae_codes=codes_gpu,
         sae=sae,
         config=gating_config,
@@ -81,7 +75,7 @@ def compute_layer_attribution(
     """Compute attribution by iterating through layers and applying attention rules."""
     attn_hook_names = [f"blocks.{i}.attn.hook_pattern" for i in range(model_cfg.n_layers)]
     num_tokens = activations[attn_hook_names[0]].shape[-1]
-    R_pos = torch.eye(num_tokens, num_tokens, device='cpu')
+    R_pos = torch.eye(num_tokens, num_tokens, device=device)
 
     debug_info_per_layer = {}
 
@@ -107,8 +101,6 @@ def compute_layer_attribution(
 
 
 def avg_heads(cam: torch.Tensor, grad: torch.Tensor) -> torch.Tensor:
-    cam = cam.cpu()
-    grad = grad.cpu()
     cam = cam.reshape(-1, cam.shape[-2], cam.shape[-1])
     grad = grad.reshape(-1, grad.shape[-2], grad.shape[-1])
     cam = grad * cam
@@ -117,8 +109,6 @@ def avg_heads(cam: torch.Tensor, grad: torch.Tensor) -> torch.Tensor:
 
 
 def apply_self_attention_rules(R_ss: torch.Tensor, cam_ss: torch.Tensor) -> torch.Tensor:
-    R_ss = R_ss.cpu()
-    cam_ss = cam_ss.cpu()
     R_ss_addition = torch.matmul(cam_ss, R_ss)
     return R_ss_addition
 
@@ -167,11 +157,11 @@ def setup_hooks(model_prisma: HookedViT, feature_gradient_layers: List[int]) -> 
     attn_hook_names = [f"blocks.{i}.attn.hook_pattern" for i in range(model_prisma.cfg.n_layers)]
 
     def save_activation_hook(tensor: torch.Tensor, hook: Any):
-        activations[hook.name] = tensor.detach().cpu()
+        activations[hook.name] = tensor.detach()
 
     def save_gradient_hook(grad: torch.Tensor, hook: Any):
         if grad is not None:
-            gradients[hook.name + "_grad"] = grad.detach().cpu()
+            gradients[hook.name + "_grad"] = grad.detach()
 
     fwd_hooks = [(name, save_activation_hook) for name in attn_hook_names]
     bwd_hooks = [(name, save_gradient_hook) for name in attn_hook_names]
@@ -183,7 +173,7 @@ def setup_hooks(model_prisma: HookedViT, feature_gradient_layers: List[int]) -> 
         def save_resid_hook(tensor, hook):
             layer_idx = int(hook.name.split('.')[1])
             if layer_idx in feature_gradient_layers:
-                residuals[layer_idx] = tensor.detach().cpu()
+                residuals[layer_idx] = tensor.detach()
             return tensor
 
         for layer_idx in all_resid_layers:

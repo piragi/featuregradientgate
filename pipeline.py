@@ -460,27 +460,25 @@ def run_unified_pipeline(
 
                     if layer_idx not in debug_data_per_layer:
                         debug_data_per_layer[layer_idx] = {
-                            'sparse_indices': [],
-                            'sparse_activations': [],
-                            'sparse_gradients': [],
-                            'sparse_contributions': [],
                             'gate_values': [],
                             'patch_attribution_deltas': [],
                             'contribution_sum': [],
                             'total_contribution_magnitude': [],
                         }
-                    debug_data_per_layer[layer_idx]['sparse_indices'].append(
-                        feature_gating.get('sparse_features_indices', [])
-                    )
-                    debug_data_per_layer[layer_idx]['sparse_activations'].append(
-                        feature_gating.get('sparse_features_activations', [])
-                    )
-                    debug_data_per_layer[layer_idx]['sparse_gradients'].append(
-                        feature_gating.get('sparse_features_gradients', [])
-                    )
-                    debug_data_per_layer[layer_idx]['sparse_contributions'].append(
-                        feature_gating.get('sparse_features_contributions', [])
-                    )
+                    # Skip sparse feature accumulation to save RAM
+                    # (uncomment if needed for detailed per-feature analysis)
+                    # debug_data_per_layer[layer_idx]['sparse_indices'].append(
+                    #     feature_gating.get('sparse_features_indices', [])
+                    # )
+                    # debug_data_per_layer[layer_idx]['sparse_activations'].append(
+                    #     feature_gating.get('sparse_features_activations', [])
+                    # )
+                    # debug_data_per_layer[layer_idx]['sparse_gradients'].append(
+                    #     feature_gating.get('sparse_features_gradients', [])
+                    # )
+                    # debug_data_per_layer[layer_idx]['sparse_contributions'].append(
+                    #     feature_gating.get('sparse_features_contributions', [])
+                    # )
                     debug_data_per_layer[layer_idx]['gate_values'].append(feature_gating.get('gate_values', np.array([])))
                     debug_data_per_layer[layer_idx]['patch_attribution_deltas'].append(
                         layer_debug.get('patch_attribution_deltas', np.array([]))
@@ -516,13 +514,9 @@ def run_unified_pipeline(
             contribution_sum_array = np.array(layer_data['contribution_sum'])
             total_contribution_magnitude_array = np.array(layer_data['total_contribution_magnitude'])
 
-            # Save with numpy - object arrays for sparse data
+            # Save with numpy - sparse data skipped to save RAM
             np.savez_compressed(
                 debug_file,
-                sparse_indices=np.array(layer_data['sparse_indices'], dtype=object),
-                sparse_activations=np.array(layer_data['sparse_activations'], dtype=object),
-                sparse_gradients=np.array(layer_data['sparse_gradients'], dtype=object),
-                sparse_contributions=np.array(layer_data['sparse_contributions'], dtype=object),
                 gate_values=gate_values_array,
                 patch_attribution_deltas=patch_attribution_deltas_array,
                 contribution_sum=contribution_sum_array,
@@ -541,7 +535,7 @@ def run_unified_pipeline(
         print("Running faithfulness evaluation...")
         try:
             evaluate_and_report_faithfulness(
-                config, model_for_analysis, device, results, clip_classifier=clip_classifier
+                config, model_for_analysis, device, results
             )
         except Exception as e:
             print(f"Error in faithfulness evaluation: {e}")

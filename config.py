@@ -165,7 +165,7 @@ class FaithfulnessConfig:
     perturb_baseline: str = "mean"  # Baseline for perturbation ("black", "white", "mean", etc.)
 
     # === GPU batching ===
-    gpu_batch_size: int = 1024  # Batch size for GPU forward passes
+    gpu_batch_size: int = 256  # Batch size for GPU forward passes
 
 
 @dataclass

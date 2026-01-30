@@ -302,8 +302,13 @@ def load_faithfulness_results(path: Path) -> pd.DataFrame:
     return df
 
 
-def load_debug_data(path: Path) -> Dict[int, Dict[str, np.ndarray]]:
-    """Load debug data containing feature activations and contributions."""
+def load_debug_data(path: Path, layers: Optional[List[int]] = None) -> Dict[int, Dict[str, np.ndarray]]:
+    """Load debug data containing feature activations and contributions.
+
+    Args:
+        path: Path to experiment directory
+        layers: Optional list of specific layers to load. If None, loads all layers.
+    """
     debug_dir = path / "debug_data"
     if not debug_dir.exists():
         raise FileNotFoundError(f"Debug data directory not found: {debug_dir}")
@@ -315,6 +320,11 @@ def load_debug_data(path: Path) -> Dict[int, Dict[str, np.ndarray]]:
     debug_data = {}
     for debug_file in sorted(debug_files):
         layer_idx = int(debug_file.stem.split('_')[1])
+
+        # Skip if not in requested layers
+        if layers is not None and layer_idx not in layers:
+            continue
+
         data = np.load(debug_file, allow_pickle=True)
 
         debug_data[layer_idx] = {
@@ -331,8 +341,14 @@ def load_debug_data(path: Path) -> Dict[int, Dict[str, np.ndarray]]:
     return debug_data
 
 
-def load_activation_data(path: Path) -> Dict[int, Dict[str, np.ndarray]]:
-    """Load lightweight activation data (from extract_sae_activations.py)."""
+def load_activation_data(path: Path, layers: Optional[List[int]] = None, max_images: Optional[int] = None) -> Dict[int, Dict[str, np.ndarray]]:
+    """Load lightweight activation data (from extract_sae_activations.py).
+
+    Args:
+        path: Path to activations directory
+        layers: Optional list of specific layers to load. If None, loads all layers.
+        max_images: Optional limit on number of images to load (for memory savings).
+    """
     debug_dir = path / "debug_data"
     if not debug_dir.exists():
         raise FileNotFoundError(f"Activation data directory not found: {debug_dir}")
@@ -344,11 +360,25 @@ def load_activation_data(path: Path) -> Dict[int, Dict[str, np.ndarray]]:
     activation_data = {}
     for activation_file in sorted(activation_files):
         layer_idx = int(activation_file.stem.split('_')[1])
+
+        # Skip if not in requested layers
+        if layers is not None and layer_idx not in layers:
+            continue
+
         data = np.load(activation_file, allow_pickle=True)
 
+        sparse_indices = data['sparse_indices']
+        sparse_activations = data['sparse_activations']
+
+        # Limit to max_images if specified (saves RAM for large datasets)
+        if max_images is not None and len(sparse_indices) > max_images:
+            print(f"  Limiting to {max_images} images (out of {len(sparse_indices)}) to save RAM")
+            sparse_indices = sparse_indices[:max_images]
+            sparse_activations = sparse_activations[:max_images]
+
         activation_data[layer_idx] = {
-            'sparse_indices': data['sparse_indices'],
-            'sparse_activations': data['sparse_activations'],
+            'sparse_indices': sparse_indices,
+            'sparse_activations': sparse_activations,
         }
 
         print(f"  Layer {layer_idx}: {len(activation_data[layer_idx]['sparse_indices'])} images")
@@ -361,7 +391,7 @@ def build_feature_activation_index(
     layer_idx: int,
     source_name: str = "test",
     top_k_per_feature: int = 100,
-    batch_size: int = 10000
+    batch_size: int = 500
 ) -> Dict[int, List[Tuple[int, int, float]]]:
     """
     Build reverse index: feature_idx -> list of (debug_idx, patch_idx, activation).
@@ -385,11 +415,11 @@ def build_feature_activation_index(
     sparse_activations = debug_data[layer_idx]['sparse_activations']
     n_images = len(sparse_indices)
 
-    # Process in batches
+    # Process in batches (smaller batches = more frequent pruning = less peak memory)
     for batch_start in range(0, n_images, batch_size):
         batch_end = min(batch_start + batch_size, n_images)
 
-        if batch_start % (batch_size * 2) == 0:
+        if batch_start % 5000 == 0:
             print(f"  Processing images {batch_start}-{batch_end}/{n_images}...")
 
         # Process this batch
@@ -401,14 +431,15 @@ def build_feature_activation_index(
                 for feat_idx, activation in zip(patch_features, patch_activations):
                     feature_index[int(feat_idx)].append((debug_idx, patch_idx, float(activation)))
 
-        # After each batch, prune each feature to top-K to save memory
-        for feat_idx in feature_index:
-            if len(feature_index[feat_idx]) > top_k_per_feature * 2:
-                # Only prune if we have significantly more than top_k
+        # After each batch, prune features that have grown too large
+        # Keep 5x top_k during processing to preserve good candidates, final prune at end
+        prune_threshold = top_k_per_feature * 5
+        for feat_idx in list(feature_index.keys()):
+            if len(feature_index[feat_idx]) > prune_threshold:
                 feature_index[feat_idx] = sorted(feature_index[feat_idx], key=lambda x: x[2],
-                                                 reverse=True)[:top_k_per_feature]
+                                                 reverse=True)[:prune_threshold]
 
-    # Final sort and prune for all features
+    # Final sort and prune to exact top-K
     print(f"  Finalizing index (keeping top-{top_k_per_feature} activations per feature)...")
     for feat_idx in feature_index:
         feature_index[feat_idx] = sorted(feature_index[feat_idx], key=lambda x: x[2], reverse=True)[:top_k_per_feature]
@@ -1035,7 +1066,8 @@ def run_case_study_analysis(
     n_case_visualizations: int = 10,
     n_prototypes: int = 10,
     validation_activations_path: Optional[Path] = None,
-    mode: str = 'improved'
+    mode: str = 'improved',
+    max_prototype_images: Optional[int] = None
 ):
     """
     Main entry point for case study analysis (ImageNet only).
@@ -1051,6 +1083,7 @@ def run_case_study_analysis(
         validation_activations_path: Optional path to validation set activations for prototypes.
                                      If provided, prototypes will be from validation set,
                                      otherwise they'll be from test set.
+        max_prototype_images: Optional limit on validation images to load for prototypes (saves RAM).
         mode: Either 'improved' (default) or 'degraded' - selects top improved or degraded images
     """
     dataset = 'imagenet'
@@ -1064,23 +1097,12 @@ def run_case_study_analysis(
     output_subdir = f"case_studies_{mode}" if mode == 'degraded' else "case_studies"
     output_dir = experiment_path / output_subdir / experiment_config
 
-    # Load data
+    # Load faithfulness results (lightweight - just CSV)
     print("Loading faithfulness results...")
     vanilla_faithfulness = load_faithfulness_results(vanilla_path)
     gated_faithfulness = load_faithfulness_results(gated_path)
 
-    print("Loading debug data (test set for case studies)...")
-    debug_data = load_debug_data(gated_path)
-
-    # Load validation activations if provided
-    if validation_activations_path is not None:
-        print(f"\nLoading validation activations for prototypes from {validation_activations_path}...")
-        validation_data = load_activation_data(validation_activations_path)
-        use_validation_prototypes = True
-    else:
-        print("\nUsing test set activations for prototypes...")
-        validation_data = None
-        use_validation_prototypes = False
+    use_validation_prototypes = validation_activations_path is not None
 
     # Load dataset config for preprocessing
     from dataset_config import get_dataset_config
@@ -1122,13 +1144,23 @@ def run_case_study_analysis(
         val_debug_to_image_idx = None
         val_debug_to_path = None
 
-    # Process each layer
+    # Process each layer ONE AT A TIME to save RAM
     all_case_studies = []
 
     for layer_idx in layers:
         print(f"\n{'='*60}")
         print(f"LAYER {layer_idx}")
         print(f"{'='*60}")
+
+        # Load data for THIS LAYER ONLY to save RAM
+        print(f"Loading debug data for layer {layer_idx}...")
+        debug_data = load_debug_data(gated_path, layers=[layer_idx])
+
+        if use_validation_prototypes:
+            print(f"Loading validation activations for layer {layer_idx}...")
+            validation_data = load_activation_data(validation_activations_path, layers=[layer_idx], max_images=max_prototype_images)
+        else:
+            validation_data = None
 
         # Build feature activation index
         # Use validation data for prototypes if available, otherwise use test data
@@ -1178,8 +1210,7 @@ def run_case_study_analysis(
                 gated_path / "attributions",
                 layer_output_dir,
                 n_prototypes=n_prototypes,
-                prototype_path_mapping=prototype_paths,
-                mode=mode
+                prototype_path_mapping=prototype_paths
             )
 
         # Summary statistics
@@ -1195,6 +1226,13 @@ def run_case_study_analysis(
             avg_contrib = case_studies[case_studies['feature_idx'] == feat_idx]['contribution'].mean()
             print(f"    Feature {feat_idx}: appears {count}x, avg contribution {avg_contrib:.4f}")
 
+        # Free memory for this layer before processing next
+        del debug_data, feature_index
+        if validation_data is not None:
+            del validation_data
+        import gc
+        gc.collect()
+
     # Save combined results
     combined_df = pd.concat(all_case_studies, ignore_index=True)
     combined_df.to_csv(output_dir / "all_case_studies.csv", index=False)
@@ -1209,17 +1247,17 @@ def run_case_study_analysis(
 
 if __name__ == "__main__":
     # Configuration
-    experiment_path = Path("./experiments/feature_gradient_sweep_") #TODO: Fill out the experiment folder
-    experiment_config = "layers_6_9_10_kappa_0.5_combined_clamp_10.0"
-    layers = [6, 9, 10]
+    experiment_path = Path("./experiments/feature_gradient_sweep_20260128_220546/") #TODO: Fill out the experiment folder
+    experiment_config = "layers_2_3_4_kappa_None_combined_clamp_None"
+    layers = [2,3,4]
 
     # Extract validation set activations for prototypes if not already done
     # This will skip extraction if files already exist
     validation_activations_path = extract_sae_activations_if_needed(
-        dataset_name='imagenet',
+        dataset_name='covidquex',
         layers=layers,
         split='val',
-        output_dir=Path("./sae_activations/imagenet_val"),
+        output_dir=Path("./sae_activations/covidquex_val"),
         subset_size=None,  # Process all validation images
         use_clip=True
     )
@@ -1229,12 +1267,13 @@ if __name__ == "__main__":
         experiment_path=experiment_path,
         experiment_config=experiment_config,
         layers=layers,
-        n_top_images=100,
-        n_patches_per_image=5,
-        n_case_visualizations=500,
+        n_top_images=500,
+        n_patches_per_image=10,
+        n_case_visualizations=1000,
         n_prototypes=20,
         validation_activations_path=validation_activations_path,
-        mode='improved'
+        mode='improved',
+        max_prototype_images=20000  # Limit to save RAM (layer 8 is 5.9GB for full 50k)
     )
 
     # Run analysis for degraded images
@@ -1247,5 +1286,6 @@ if __name__ == "__main__":
         n_case_visualizations=500,
         n_prototypes=20,
         validation_activations_path=validation_activations_path,
-        mode='degraded'
+        mode='degraded',
+        max_prototype_images=5000  # Limit to save RAM (layer 8 is 5.9GB for full 50k)
     )
