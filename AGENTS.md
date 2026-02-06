@@ -46,7 +46,16 @@ For concurrent paper release:
 
 ## Current Repo Snapshot (as of this plan)
 - Active tracked code is flat at repo root (`main.py`, `pipeline.py`, `transmm.py`, `feature_gradient_gating.py`, `setup.py`, etc.).
-- `src/gradcamfaith/` currently contains only cache artifacts and no tracked source files.
+- `src/gradcamfaith/core/` now contains tracked source files from WP-01:
+  - `src/gradcamfaith/core/attribution.py`
+  - `src/gradcamfaith/core/gating.py`
+  - `src/gradcamfaith/core/config.py`
+  - `src/gradcamfaith/core/types.py`
+- Root compatibility wrappers are now active for migrated modules:
+  - `transmm.py`
+  - `feature_gradient_gating.py`
+  - `config.py`
+  - `data_types.py`
 - Major concerns are mixed in single files:
   - Core method math + hook orchestration.
   - Experiment sweep orchestration.
@@ -209,11 +218,36 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Goal: break `pipeline.py` into smaller orchestration/model/data IO units.
 - In scope: move model-loading logic to `models/load.py`; move SAE loader to `models/sae_resources.py`; keep thin pipeline orchestrator.
 - In scope: preserve existing runtime behavior and output locations.
+- Required function moves:
+  - move `load_model_for_dataset` from `pipeline.py` to `src/gradcamfaith/models/load.py`
+  - move `load_steering_resources` from `pipeline.py` to `src/gradcamfaith/models/sae_resources.py`
+- Required API compatibility (must remain importable from `pipeline`):
+  - `run_unified_pipeline`
+  - `load_model_for_dataset`
+  - `load_steering_resources`
+- Required signature stability (no parameter or return type changes):
+  - `run_unified_pipeline(...)`
+  - `load_model_for_dataset(...)`
+  - `load_steering_resources(...)`
+- Allowed file-change surface for WP-02:
+  - `pipeline.py`
+  - `src/gradcamfaith/models/load.py` (new)
+  - `src/gradcamfaith/models/sae_resources.py` (new)
+  - minimal import wiring files needed for compatibility only
+- Required behavior constraints:
+  - no metric logic changes (`faithfulness.py`, `saco.py` semantics unchanged)
+  - no output path format changes
+  - no experiment configuration semantics changes
 - Out of scope: changing metrics definitions or experiment semantics.
 - Depends on: WP-01.
-- Acceptance checks: `uv run python -c "from pipeline import run_unified_pipeline"` remains valid.
-- Acceptance checks: one small subset run succeeds with existing command path.
-- Deliverables: decomposed modules and compatibility imports with updated docs.
+- Acceptance checks: `uv run python -c "from pipeline import run_unified_pipeline, load_model_for_dataset, load_steering_resources; print('api-ok')"` remains valid.
+- Acceptance checks: `uv run python -c "import inspect; from pipeline import run_unified_pipeline, load_model_for_dataset, load_steering_resources; print(inspect.signature(run_unified_pipeline)); print(inspect.signature(load_model_for_dataset)); print(inspect.signature(load_steering_resources))"` and confirm signatures are unchanged vs pre-WP-02 baseline.
+- Acceptance checks: if local data/model assets exist, run one subset smoke with existing pipeline path and document the exact command used and result.
+- Required handoff artifacts in PR summary:
+  - before/after function location map
+  - compatibility import map
+  - exact validation commands executed and outcomes
+- Deliverables: decomposed modules, compatibility imports, and updated docs.
 
 ### WP-03 Data Setup Split
 - Goal: split downloading and conversion concerns now mixed in `setup.py`.
@@ -261,7 +295,7 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Assign `WP-01` to one coder with branch name `wp/WP-01-core-package-bootstrap`.
+1. Assign `WP-02` to one coder with branch name `wp/WP-02-pipeline-decomposition`.
 2. Require one commit for the workpackage and include validation output summary in the PR description.
 3. Review against `Workpackage Review Checklist`, then update `Feature Tracker (Living)` with accepted result and next assignment.
 
