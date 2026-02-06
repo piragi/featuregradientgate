@@ -165,18 +165,21 @@ Always record in `AGENTS.md`:
 This tracker is a required, evolving log for project state and near-term execution. Update it after every successful commit.
 
 - Program branch: `feature/team-research-restructure-plan`
-- Last successful commit reflected here: `WP-01 on branch wp/WP-01-core-package-bootstrap`
-- What happened most recently: `WP-01 completed — migrated transmm.py, feature_gradient_gating.py, config.py, data_types.py into src/gradcamfaith/core/ (attribution.py, gating.py, config.py, types.py). Root compatibility wrappers in place. Package made installable via hatchling build system.`
-- What should happen next: `review WP-01, then assign WP-02 (pipeline decomposition) and/or WP-03 (data setup split)`
-- Immediate next task (concrete): `WP-02: break pipeline.py into models/load.py, models/sae_resources.py, and thin orchestrator`
-- Immediate validation for that task: `uv run python -c "from pipeline import run_unified_pipeline"`
-- Known blockers/risks now: `pipeline.py has many internal dependencies; decomposition should be incremental`
+- Last successful commit reflected here: `WP-02 on branch wp/WP-02-pipeline-decomposition`
+- What happened most recently: `WP-02 completed — extracted load_model_for_dataset to src/gradcamfaith/models/load.py, load_steering_resources to src/gradcamfaith/models/sae_resources.py. pipeline.py retains orchestration logic and re-exports both functions for compatibility.`
+- What should happen next: `review WP-02, then assign WP-03 (data setup split)`
+- Immediate next task (concrete): `WP-03: split setup.py into data/download.py and data/prepare.py with root compatibility wrapper`
+- Immediate validation for that task: `uv run setup.py` still resolves and starts the same top-level flow
+- Known blockers/risks now: `setup.py is large (32K) with mixed download/conversion concerns; needs careful boundary identification`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
 
 ### Decision Log
 - **WP-01**: Added `[build-system]` (hatchling) and `[tool.hatch.build.targets.wheel]` to pyproject.toml to make `src/gradcamfaith` an installable package. This is required for absolute imports (`from gradcamfaith.core.config import ...`) to work. `uv sync` installs the package in dev mode automatically.
 - **WP-01**: Internal imports within the package use absolute paths (`from gradcamfaith.core.config import ...`), not relative imports, for clarity.
 - **WP-01**: Root compatibility wrappers use `from gradcamfaith.core.<module> import *` plus explicit named re-exports to preserve all existing import patterns.
+- **WP-02**: `load_model_for_dataset` moved to `src/gradcamfaith/models/load.py`, `load_steering_resources` moved to `src/gradcamfaith/models/sae_resources.py`. Both re-exported from `pipeline.py` for compatibility.
+- **WP-02**: `models/load.py` imports `PipelineConfig` from `gradcamfaith.core.config` (package path) and `DatasetConfig` from root-level `dataset_config` (not yet migrated). This is intentional — root modules remain importable via sys.path.
+- **WP-02**: Removed `models/` from `.gitignore` and anchored `model/` to root (`/model/`). The unanchored `models/` rule was blocking `src/gradcamfaith/models/` from being tracked. Model weights are still safely ignored by the global `*.pt` rule.
 
 ## Tooling and Commands
 Preferred command style:

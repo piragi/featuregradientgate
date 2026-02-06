@@ -10,8 +10,7 @@ chexpert/
 *.csv
 *.png
 hyper-kvasir/*
-model/
-models/
+/model/
 results_transmmplus/
 hyper-kvasir_imagefolder/*
 wandb/
