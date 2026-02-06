@@ -165,12 +165,12 @@ Always record in `AGENTS.md`:
 This tracker is a required, evolving log for project state and near-term execution. Update it after every successful commit.
 
 - Program branch: `feature/team-research-restructure-plan`
-- Last successful commit reflected here: `WP-02 on branch wp/WP-02-pipeline-decomposition`
-- What happened most recently: `WP-02 completed — extracted load_model_for_dataset to src/gradcamfaith/models/load.py, load_steering_resources to src/gradcamfaith/models/sae_resources.py. pipeline.py retains orchestration logic and re-exports both functions for compatibility.`
-- What should happen next: `review WP-02, then assign WP-03 (data setup split)`
-- Immediate next task (concrete): `WP-03: split setup.py into data/download.py and data/prepare.py with root compatibility wrapper`
-- Immediate validation for that task: `uv run setup.py` still resolves and starts the same top-level flow
-- Known blockers/risks now: `setup.py is large (32K) with mixed download/conversion concerns; needs careful boundary identification`
+- Last successful commit reflected here: `WP-03 on branch wp/WP-03-data-setup-split`
+- What happened most recently: `WP-03 completed — split setup.py into src/gradcamfaith/data/download.py (9 download functions) and src/gradcamfaith/data/prepare.py (11 prepare/convert functions). Root setup.py is now a compatibility wrapper with main() entrypoint preserved.`
+- What should happen next: `review WP-03, then assign WP-04 (experiments migration)`
+- Immediate next task (concrete): `WP-04: migrate main.py, sae.py, comparsion.py, analysis_feature_case_studies.py into src/gradcamfaith/experiments/`
+- Immediate validation for that task: `root entry scripts still callable via compatibility wrappers`
+- Known blockers/risks now: `experiment scripts have inline configs and are the primary researcher interface; migration must preserve config-first workflow`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
 
 ### Decision Log
@@ -180,6 +180,8 @@ This tracker is a required, evolving log for project state and near-term executi
 - **WP-02**: `load_model_for_dataset` moved to `src/gradcamfaith/models/load.py`, `load_steering_resources` moved to `src/gradcamfaith/models/sae_resources.py`. Both re-exported from `pipeline.py` for compatibility.
 - **WP-02**: `models/load.py` imports `PipelineConfig` from `gradcamfaith.core.config` (package path) and `DatasetConfig` from root-level `dataset_config` (not yet migrated). This is intentional — root modules remain importable via sys.path.
 - **WP-02**: Removed `models/` from `.gitignore` and anchored `model/` to root (`/model/`). The unanchored `models/` rule was blocking `src/gradcamfaith/models/` from being tracked. Model weights are still safely ignored by the global `*.pt` rule.
+- **WP-03**: Download functions (9) moved to `src/gradcamfaith/data/download.py`, prepare/convert functions (11) moved to `src/gradcamfaith/data/prepare.py`. Root `setup.py` is now a compatibility wrapper with `main()` kept inline (it orchestrates both download and prepare calls).
+- **WP-03**: `data/prepare.py` imports `DatasetConfig`, `COVIDQUEX_CONFIG`, `HYPERKVASIR_CONFIG` from root-level `dataset_config` (not yet migrated). Same sys.path pattern as WP-02.
 
 ## Tooling and Commands
 Preferred command style:
