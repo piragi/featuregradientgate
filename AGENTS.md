@@ -156,13 +156,18 @@ Always record in `AGENTS.md`:
 This tracker is a required, evolving log for project state and near-term execution. Update it after every successful commit.
 
 - Program branch: `feature/team-research-restructure-plan`
-- Last successful commit reflected here: `none yet (tracking starts with rework commits on program branch)`
-- What happened most recently: `added config-first research interface policy for concurrent paper release workflow`
-- What should happen next: `assign WP-01 to a coder and start package bootstrap on src/gradcamfaith/core`
-- Immediate next task (concrete): `WP-01: move transmm/feature_gradient_gating + config/data_types into src/gradcamfaith/core with root-level compatibility wrappers`
-- Immediate validation for that task: `uv run python -c "import transmm, feature_gradient_gating, config, data_types"`
-- Known blockers/risks now: `large monolithic files and mixed responsibilities increase migration risk if moved in big batches`
+- Last successful commit reflected here: `WP-01 on branch wp/WP-01-core-package-bootstrap`
+- What happened most recently: `WP-01 completed — migrated transmm.py, feature_gradient_gating.py, config.py, data_types.py into src/gradcamfaith/core/ (attribution.py, gating.py, config.py, types.py). Root compatibility wrappers in place. Package made installable via hatchling build system.`
+- What should happen next: `review WP-01, then assign WP-02 (pipeline decomposition) and/or WP-03 (data setup split)`
+- Immediate next task (concrete): `WP-02: break pipeline.py into models/load.py, models/sae_resources.py, and thin orchestrator`
+- Immediate validation for that task: `uv run python -c "from pipeline import run_unified_pipeline"`
+- Known blockers/risks now: `pipeline.py has many internal dependencies; decomposition should be incremental`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
+
+### Decision Log
+- **WP-01**: Added `[build-system]` (hatchling) and `[tool.hatch.build.targets.wheel]` to pyproject.toml to make `src/gradcamfaith` an installable package. This is required for absolute imports (`from gradcamfaith.core.config import ...`) to work. `uv sync` installs the package in dev mode automatically.
+- **WP-01**: Internal imports within the package use absolute paths (`from gradcamfaith.core.config import ...`), not relative imports, for clarity.
+- **WP-01**: Root compatibility wrappers use `from gradcamfaith.core.<module> import *` plus explicit named re-exports to preserve all existing import patterns.
 
 ## Tooling and Commands
 Preferred command style:
