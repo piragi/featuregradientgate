@@ -166,8 +166,9 @@ This tracker is a required, evolving log for project state and near-term executi
 
 - Program branch: `feature/team-research-restructure-plan`
 - Last successful commit reflected here: `WP-03 on branch wp/WP-03-data-setup-split`
-- What happened most recently: `WP-03 completed — split setup.py into src/gradcamfaith/data/download.py (9 download functions) and src/gradcamfaith/data/prepare.py (11 prepare/convert functions). Root setup.py is now a compatibility wrapper with main() entrypoint preserved.`
-- What should happen next: `review WP-03, then assign WP-04 (experiments migration)`
+- What happened most recently: `WP-03 completed and reviewed — split setup.py into src/gradcamfaith/data/download.py (9 download functions) and src/gradcamfaith/data/prepare.py (11 prepare/convert functions). Root setup.py remains a compatibility wrapper with main() preserved.`
+- Reviewer decision: `WP-03 accepted with follow-ups (non-blocking): keep setup flow behavior as-is, but align remaining install guidance strings with uv-only policy in a later docs/tooling cleanup commit.`
+- What should happen next: `assign WP-04 (experiments migration) and preserve config-first researcher workflow during move`
 - Immediate next task (concrete): `WP-04: migrate main.py, sae.py, comparsion.py, analysis_feature_case_studies.py into src/gradcamfaith/experiments/`
 - Immediate validation for that task: `root entry scripts still callable via compatibility wrappers`
 - Known blockers/risks now: `experiment scripts have inline configs and are the primary researcher interface; migration must preserve config-first workflow`
@@ -182,6 +183,8 @@ This tracker is a required, evolving log for project state and near-term executi
 - **WP-02**: Removed `models/` from `.gitignore` and anchored `model/` to root (`/model/`). The unanchored `models/` rule was blocking `src/gradcamfaith/models/` from being tracked. Model weights are still safely ignored by the global `*.pt` rule.
 - **WP-03**: Download functions (9) moved to `src/gradcamfaith/data/download.py`, prepare/convert functions (11) moved to `src/gradcamfaith/data/prepare.py`. Root `setup.py` is now a compatibility wrapper with `main()` kept inline (it orchestrates both download and prepare calls).
 - **WP-03**: `data/prepare.py` imports `DatasetConfig`, `COVIDQUEX_CONFIG`, `HYPERKVASIR_CONFIG` from root-level `dataset_config` (not yet migrated). Same sys.path pattern as WP-02.
+- **WP-03 review**: Verified parity against pre-WP-03 `setup.py`: all required moved functions exist, signatures are unchanged, and function bodies match (structural move only).
+- **WP-03 follow-up**: Two user-facing dependency hints still mention `pip install` (`setup.py`, `src/gradcamfaith/data/download.py`). Keep behavior unchanged for now; update wording to `uv`-compatible guidance in a later doc/tooling cleanup task.
 
 ## Tooling and Commands
 Preferred command style:
@@ -312,10 +315,83 @@ All workpackages below are designed for coder ownership and maintainer review.
 - In scope: migrate `main.py`, `sae.py`, `comparsion.py`, `analysis_feature_case_studies.py`.
 - In scope: fix typo path by introducing `comparison.py` while preserving `comparsion.py` compatibility.
 - In scope: preserve typed in-file config patterns where they accelerate research iteration.
+- Required function moves (`main.py` -> `src/gradcamfaith/experiments/sweep.py`):
+  - `run_single_experiment`
+  - `run_parameter_sweep`
+  - `main`
+- Required function moves (`sae.py` -> `src/gradcamfaith/experiments/sae_train.py`):
+  - `train_single_config`
+  - `main`
+  - keep `SWEEP_CONFIG` as config-first editable object (or equivalent typed config object)
+- Required function moves (`comparsion.py` -> `src/gradcamfaith/experiments/comparison.py`):
+  - `cohens_d`
+  - `load_experiment_data`
+  - `extract_metrics`
+  - `get_experiment_info`
+  - `load_all_experiments`
+  - `calculate_statistical_comparison`
+  - `interpret_effect_size`
+  - `print_detailed_results`
+  - `create_summary_table`
+  - `identify_best_performers`
+  - `classify_layer_type`
+  - `calculate_composite_improvement`
+  - `identify_best_overall_performers`
+  - `save_results`
+  - `main`
+- Required function moves (`analysis_feature_case_studies.py` -> `src/gradcamfaith/experiments/case_studies.py`):
+  - `extract_sae_activations_if_needed`
+  - `_extract_sae_activations`
+  - `load_and_preprocess_image`
+  - `load_faithfulness_results`
+  - `load_debug_data`
+  - `load_activation_data`
+  - `build_feature_activation_index`
+  - `compute_composite_improvement`
+  - `find_dominant_features_in_image`
+  - `extract_case_studies`
+  - `visualize_case_study`
+  - `save_case_study_individual_images`
+  - `get_image_path`
+  - `load_attribution`
+  - `run_case_study_analysis`
+- Required API compatibility (must remain importable from root modules):
+  - from `main`: `run_single_experiment`, `run_parameter_sweep`, `main`
+  - from `sae`: `train_single_config`, `main`, `SWEEP_CONFIG`
+  - from `comparsion`: analysis/stat functions and `main`
+  - from `analysis_feature_case_studies`: `run_case_study_analysis` and extraction helpers
+- Required signature stability (no parameter or return type changes) for:
+  - `run_single_experiment(...)`
+  - `run_parameter_sweep(...)`
+  - `train_single_config(...)`
+  - `main(...)` in `comparsion.py`
+  - `run_case_study_analysis(...)`
+- Allowed file-change surface for WP-04:
+  - `main.py`
+  - `sae.py`
+  - `comparsion.py`
+  - `analysis_feature_case_studies.py`
+  - `src/gradcamfaith/experiments/sweep.py` (new)
+  - `src/gradcamfaith/experiments/sae_train.py` (new)
+  - `src/gradcamfaith/experiments/comparison.py` (new canonical)
+  - `src/gradcamfaith/experiments/case_studies.py` (new)
+  - minimal import wiring files needed for compatibility only
+- Required behavior constraints:
+  - do not change experiment metric semantics (`SaCo`, `FaithfulnessCorrelation`, `PixelFlipping`)
+  - do not change output directory/file naming conventions used by downstream analysis
+  - preserve config-first workflow (editable in-file sweep/config objects remain valid)
+  - do not convert this layer to flag-heavy CLI orchestration
 - Out of scope: changing experiment objective functions or metrics interpretation.
 - Depends on: WP-01 and WP-02.
-- Acceptance checks: root entry scripts still callable via compatibility wrappers.
-- Deliverables: package experiment modules + stable root shims.
+- Acceptance checks: `uv run python -c "from main import run_single_experiment, run_parameter_sweep; from sae import train_single_config, SWEEP_CONFIG; from comparsion import main as comparison_main; from analysis_feature_case_studies import run_case_study_analysis; print('root-api-ok')"` remains valid.
+- Acceptance checks: `uv run python -c "from gradcamfaith.experiments.sweep import run_single_experiment, run_parameter_sweep; from gradcamfaith.experiments.sae_train import train_single_config; from gradcamfaith.experiments.comparison import main as comparison_main; from gradcamfaith.experiments.case_studies import run_case_study_analysis; print('pkg-api-ok')"` remains valid.
+- Acceptance checks: `uv run python -c "import inspect; from main import run_single_experiment, run_parameter_sweep; from sae import train_single_config; from comparsion import main as comparison_main; from analysis_feature_case_studies import run_case_study_analysis; print(inspect.signature(run_single_experiment)); print(inspect.signature(run_parameter_sweep)); print(inspect.signature(train_single_config)); print(inspect.signature(comparison_main)); print(inspect.signature(run_case_study_analysis))"` and confirm signatures unchanged vs pre-WP-04 baseline.
+- Acceptance checks: if local assets exist, run one small/subset experiment path and one comparison/case-study path and document exact commands and outcomes.
+- Required handoff artifacts in PR summary:
+  - before/after function location map for all four migrated scripts
+  - compatibility import map (root wrappers -> `gradcamfaith.experiments.*`)
+  - exact validation commands executed and outcomes
+- Deliverables: package experiment modules, stable root shims, typo-safe comparison path, and updated AGENTS tracker.
 
 ### WP-05 Example Path
 - Goal: add one clear newcomer path for understanding and running the method.
@@ -344,7 +420,7 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Assign `WP-03` to one coder with branch name `wp/WP-03-data-setup-split`.
+1. Assign `WP-04` to one coder with branch name `wp/WP-04-experiments-migration`.
 2. Require one commit for the workpackage and include validation output summary in the PR description.
 3. Review against `Workpackage Review Checklist`, then update `Feature Tracker (Living)` with accepted result and next assignment.
 
