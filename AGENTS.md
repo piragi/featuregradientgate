@@ -256,10 +256,54 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Goal: split downloading and conversion concerns now mixed in `setup.py`.
 - In scope: create `data/download.py` and `data/prepare.py`; keep root `setup.py` as compatibility CLI.
 - In scope: retain current dataset support (`imagenet`, `hyperkvasir`, `covidquex`, `waterbirds`).
+- Required function moves (`setup.py` -> `src/gradcamfaith/data/download.py`):
+  - `download_with_progress`
+  - `download_from_gdrive`
+  - `extract_zip`
+  - `extract_tar_gz`
+  - `download_hyperkvasir`
+  - `download_imagenet`
+  - `download_covidquex`
+  - `download_thesis_saes`
+  - `download_sae_checkpoints`
+- Required function moves (`setup.py` -> `src/gradcamfaith/data/prepare.py`):
+  - `_create_output_structure`
+  - `_create_conversion_stats`
+  - `_save_metadata`
+  - `_process_image`
+  - `split_ids`
+  - `prepare_covidquex`
+  - `prepare_hyperkvasir`
+  - `prepare_waterbirds`
+  - `prepare_imagenet`
+  - `convert_dataset`
+  - `print_summary`
+- Required API compatibility (must remain importable from root `setup.py`):
+  - `convert_dataset` (required by `pipeline.py`)
+  - `main`
+  - existing public download/prepare functions used by current workflows
+- Required signature stability (no parameter or return type changes):
+  - all moved functions listed above
+- Allowed file-change surface for WP-03:
+  - `setup.py`
+  - `src/gradcamfaith/data/download.py` (new)
+  - `src/gradcamfaith/data/prepare.py` (new)
+  - minimal import wiring files needed for compatibility only
+- Required behavior constraints:
+  - do not change dataset output layout (`train/val/test/class_<idx>`)
+  - do not change metadata filename/shape (`dataset_metadata.json`)
+  - do not change download URLs / IDs / repo IDs unless explicitly approved
+  - do not change conversion split behavior or naming conventions
 - Out of scope: changing dataset content logic beyond structural extraction.
 - Depends on: WP-01.
-- Acceptance checks: `uv run setup.py` still resolves and starts the same top-level flow.
-- Deliverables: separated modules, unchanged CLI behavior, AGENTS update noting boundaries.
+- Acceptance checks: `uv run python -c "from setup import convert_dataset, main; print('api-ok')"` remains valid.
+- Acceptance checks: `uv run python -c "import inspect; from setup import convert_dataset; print(inspect.signature(convert_dataset))"` and confirm signature unchanged vs pre-WP-03 baseline.
+- Acceptance checks: if local assets exist, run one non-destructive conversion smoke (small/sample path) and document exact command and result.
+- Required handoff artifacts in PR summary:
+  - before/after function location map
+  - compatibility import map (`setup.py` -> `gradcamfaith.data.*`)
+  - exact validation commands executed and outcomes
+- Deliverables: separated modules, unchanged compatibility API/CLI behavior, and AGENTS update noting boundaries.
 
 ### WP-04 Experiments Migration
 - Goal: move experiment drivers into `src/gradcamfaith/experiments`.
@@ -298,7 +342,7 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Assign `WP-02` to one coder with branch name `wp/WP-02-pipeline-decomposition`.
+1. Assign `WP-03` to one coder with branch name `wp/WP-03-data-setup-split`.
 2. Require one commit for the workpackage and include validation output summary in the PR description.
 3. Review against `Workpackage Review Checklist`, then update `Feature Tracker (Living)` with accepted result and next assignment.
 
