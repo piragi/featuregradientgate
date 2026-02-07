@@ -167,11 +167,11 @@ This tracker is a required, evolving log for project state and near-term executi
 - Program branch: `feature/team-research-restructure-plan`
 - Last successful commit reflected here: `WP-04 on branch wp/WP-04-experiments-migration`
 - What happened most recently: `WP-04 completed — migrated main.py (3 functions) to experiments/sweep.py, sae.py (2 functions + SWEEP_CONFIG) to experiments/sae_train.py, comparsion.py (14 functions) to experiments/comparison.py (typo fixed), analysis_feature_case_studies.py (14 functions) to experiments/case_studies.py. All root scripts are now compatibility wrappers. Config-first workflow preserved.`
-- Reviewer decision: `pending review`
-- What should happen next: `review WP-04, then assign WP-05 (Example Path)`
+- Reviewer decision: `accepted with follow-ups`
+- What should happen next: `assign WP-05 (Example Path), then run a focused clarity/unused-args cleanup pass`
 - Immediate next task (concrete): `WP-05: add src/gradcamfaith/examples/minimal_run.py and README.md`
 - Immediate validation for that task: `example imports and runs on a tiny subset with documented uv command`
-- Known blockers/risks now: `none — all experiment scripts migrated and backward-compatible`
+- Known blockers/risks now: `root wrapper analysis_feature_case_studies.py does not re-export private helper _extract_sae_activations; this may break niche direct imports and should be resolved explicitly in compatibility cleanup`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
 
 ### Decision Log
@@ -191,6 +191,8 @@ This tracker is a required, evolving log for project state and near-term executi
 - **WP-04**: All 14 functions moved from `analysis_feature_case_studies.py` to `src/gradcamfaith/experiments/case_studies.py`. Import changed inside `_extract_sae_activations`: `import config` → `import gradcamfaith.core.config as config`.
 - **WP-04**: Config-first workflow preserved — `SWEEP_CONFIG` dict and inline experiment configs remain editable in-file objects. No CLI orchestration introduced.
 - **WP-04**: `seaborn` added as dependency (`uv add seaborn`) — required by `comparsion.py`/`comparison.py` but was missing from pyproject.toml.
+- **WP-04 review**: Acceptance import checks passed for root and package experiment entrypoints; function signatures matched WP-04 requirements for `run_single_experiment`, `run_parameter_sweep`, `train_single_config`, `comparison.main`, and `run_case_study_analysis`.
+- **WP-04 follow-up**: `_extract_sae_activations` exists in package module but is not re-exported from root `analysis_feature_case_studies.py` wrapper. Decide explicitly: re-export for strict compatibility or document it as intentionally private-only going forward.
 
 ## Tooling and Commands
 Preferred command style:
@@ -213,7 +215,8 @@ Since tests are postponed, each structural task must include a minimal smoke val
 3. Data setup split: separate download and conversion concerns from `setup.py`.
 4. Experiment scripts migration: move sweep/SAE/comparison/case-study scripts under `experiments/`.
 5. Example path: add one minimal runnable example under `examples/`.
-6. Compatibility cleanup: keep shims until new paths are stable, then prune gradually.
+6. Clarity pass: remove unused arguments/dead code and split oversized functions where this lowers cognitive load without behavior changes.
+7. Compatibility cleanup: keep shims until new paths are stable, then prune gradually.
 
 ## Workpackages For Team
 All workpackages below are designed for coder ownership and maintainer review.
@@ -403,17 +406,60 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Goal: add one clear newcomer path for understanding and running the method.
 - In scope: `src/gradcamfaith/examples/minimal_run.py` and `src/gradcamfaith/examples/README.md`.
 - In scope: include exact `uv` commands, expected output artifacts, and an example config-first run.
+- Required example API shape in `minimal_run.py`:
+  - `ExampleConfig` (typed config object/dataclass for the example run)
+  - `run_example(config: ExampleConfig)` as primary callable
+  - `main()` as thin runner
+- Required behavior for the example:
+  - must import from package modules (`gradcamfaith.*`), not root compatibility wrappers
+  - must support a tiny-subset path for quick execution
+  - must emit a minimal run manifest (`resolved config`, `seed`, `timestamp`, `git SHA`) to align with reproducibility policy
+  - must document both modes:
+    - `explore`: editable config in file
+    - `paper`: frozen config reference path (even if placeholder for now)
+- Allowed file-change surface for WP-05:
+  - `src/gradcamfaith/examples/minimal_run.py` (new)
+  - `src/gradcamfaith/examples/README.md` (new)
+  - minimal import wiring only if required
 - Out of scope: full benchmark scripts.
 - Depends on: WP-02 minimum.
-- Acceptance checks: example imports and runs on a tiny subset with documented command.
-- Deliverables: runnable example and documentation.
+- Acceptance checks: `uv run python -c "from gradcamfaith.examples.minimal_run import ExampleConfig, run_example, main; print('example-api-ok')"` remains valid.
+- Acceptance checks: one documented command executes the tiny-subset example path (or dry-run path if data is unavailable) and writes the expected manifest/artifact locations.
+- Acceptance checks: `README.md` includes exact `uv` commands and a short expected-output tree.
+- Required handoff artifacts in PR summary:
+  - exact command transcript used for smoke validation
+  - generated artifact tree (or dry-run artifact tree) with paths
+  - known limitations (e.g., required local data/model assets)
+- Deliverables: runnable example module, newcomer README, and reproducibility manifest path.
 
-### WP-06 Compatibility and Cleanup
+### WP-06 Targeted Clarity Cleanup
+- Goal: reduce cognitive load in migrated code via no-behavior-change simplification.
+- In scope: identify and resolve unused arguments, redundant helpers, and overlong functions where decomposition improves readability.
+- In scope: prioritize recently migrated modules first:
+  - `src/gradcamfaith/experiments/sweep.py`
+  - `src/gradcamfaith/experiments/case_studies.py`
+  - `src/gradcamfaith/data/download.py`
+- In scope: for intentionally reserved parameters, keep signature but mark clearly (for example `_param`) and document why retained.
+- Required output:
+  - short “cleanup inventory” in PR summary listing each removed/renamed unused argument and each function split
+  - before/after function map for changed modules
+- Required behavior constraints:
+  - no metric semantic changes
+  - no output artifact naming/path changes
+  - no CLI surface expansion
+- Out of scope: algorithmic changes, metric redesign, or dataset logic changes.
+- Depends on: WP-04.
+- Acceptance checks: `uvx ruff check src/gradcamfaith/experiments src/gradcamfaith/data --select ARG001,ARG002` passes for touched files.
+- Acceptance checks: public entrypoint signatures remain unchanged unless explicitly approved and documented.
+- Acceptance checks: representative import/path smokes still pass after cleanup.
+- Deliverables: lower-complexity code in target modules, documented cleanup decisions, and unchanged runtime semantics.
+
+### WP-07 Compatibility and Cleanup
 - Goal: tighten structure after migrations while preserving legacy branch compatibility promises.
 - In scope: audit wrappers, imports, and deprecated paths; remove only what is explicitly approved.
 - In scope: update `README.md` and `AGENTS.md` to final structure and command paths.
 - Out of scope: dropping legacy wrappers without maintainer sign-off.
-- Depends on: WP-01 through WP-05.
+- Depends on: WP-01 through WP-06.
 - Acceptance checks: documented command matrix remains valid.
 - Deliverables: final compatibility report and cleanup summary.
 
@@ -426,7 +472,7 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Assign `WP-04` to one coder with branch name `wp/WP-04-experiments-migration`.
+1. Assign `WP-05` to one coder with branch name `wp/WP-05-example-path`.
 2. Require one commit for the workpackage and include validation output summary in the PR description.
 3. Review against `Workpackage Review Checklist`, then update `Feature Tracker (Living)` with accepted result and next assignment.
 
