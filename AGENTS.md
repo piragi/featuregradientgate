@@ -165,13 +165,13 @@ Always record in `AGENTS.md`:
 This tracker is a required, evolving log for project state and near-term execution. Update it after every successful commit.
 
 - Program branch: `feature/team-research-restructure-plan`
-- Last successful commit reflected here: `WP-04 on branch wp/WP-04-experiments-migration`
-- What happened most recently: `WP-04 completed — migrated main.py (3 functions) to experiments/sweep.py, sae.py (2 functions + SWEEP_CONFIG) to experiments/sae_train.py, comparsion.py (14 functions) to experiments/comparison.py (typo fixed), analysis_feature_case_studies.py (14 functions) to experiments/case_studies.py. All root scripts are now compatibility wrappers. Config-first workflow preserved.`
-- Reviewer decision: `accepted with follow-ups`
-- What should happen next: `assign WP-05 (Example Path), then run a focused clarity/unused-args cleanup pass`
-- Immediate next task (concrete): `WP-05: add src/gradcamfaith/examples/minimal_run.py and README.md`
-- Immediate validation for that task: `example imports and runs on a tiny subset with documented uv command`
-- Known blockers/risks now: `root wrapper analysis_feature_case_studies.py does not re-export private helper _extract_sae_activations; this may break niche direct imports and should be resolved explicitly in compatibility cleanup`
+- Last successful commit reflected here: `WP-05 on branch wp/WP-05-example-path`
+- What happened most recently: `WP-05 completed — added src/gradcamfaith/examples/minimal_run.py (ExampleConfig dataclass, run_example, main) and README.md. Supports dry-run (no data) and full run. Emits run manifest with resolved config, seed, timestamp, git SHA, and uv.lock reference.`
+- Reviewer decision: `pending review`
+- What should happen next: `review WP-05, then assign WP-06 (Targeted Clarity Cleanup)`
+- Immediate next task (concrete): `WP-06: clarity pass on experiments/sweep.py, experiments/case_studies.py, data/download.py`
+- Immediate validation for that task: `ruff ARG001/ARG002 clean, public signatures unchanged, import smokes pass`
+- Known blockers/risks now: `_extract_sae_activations re-export was fixed in WP-04 follow-up commit; full example run requires local data/model assets (dry-run path validates config/manifest without them)`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
 
 ### Decision Log
@@ -193,6 +193,11 @@ This tracker is a required, evolving log for project state and near-term executi
 - **WP-04**: `seaborn` added as dependency (`uv add seaborn`) — required by `comparsion.py`/`comparison.py` but was missing from pyproject.toml.
 - **WP-04 review**: Acceptance import checks passed for root and package experiment entrypoints; function signatures matched WP-04 requirements for `run_single_experiment`, `run_parameter_sweep`, `train_single_config`, `comparison.main`, and `run_case_study_analysis`.
 - **WP-04 follow-up**: `_extract_sae_activations` exists in package module but is not re-exported from root `analysis_feature_case_studies.py` wrapper. Decide explicitly: re-export for strict compatibility or document it as intentionally private-only going forward.
+- **WP-04 fix**: Re-exported `_extract_sae_activations` from `analysis_feature_case_studies.py` wrapper (underscore-prefixed names are skipped by `import *`; explicit named import required).
+- **WP-05**: Added `src/gradcamfaith/examples/minimal_run.py` with `ExampleConfig` dataclass, `run_example(config)`, and `main()`. Imports exclusively from `gradcamfaith.*` package modules (not root wrappers). Supports `--dry-run` flag for validation without data/models.
+- **WP-05**: Added `src/gradcamfaith/examples/README.md` with exact `uv` commands, explore/paper mode documentation, prerequisites, and expected output tree.
+- **WP-05**: Run manifest emits `resolved_config`, `seed`, `timestamp`, `git_sha`, and `environment_lock` per the Research Interface Policy reproducibility requirements.
+- **WP-05**: Heavy imports (torch, model loading) are deferred until after dry-run check, so `--dry-run` completes instantly without GPU or model dependencies.
 
 ## Tooling and Commands
 Preferred command style:
