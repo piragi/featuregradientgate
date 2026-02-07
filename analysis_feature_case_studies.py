@@ -1,6 +1,7 @@
 """Compatibility wrapper — canonical source is gradcamfaith.experiments.case_studies"""
 from gradcamfaith.experiments.case_studies import *  # noqa: F401,F403
 from gradcamfaith.experiments.case_studies import (  # noqa: F401
+    _extract_sae_activations,
     extract_sae_activations_if_needed,
     load_and_preprocess_image,
     load_faithfulness_results,
