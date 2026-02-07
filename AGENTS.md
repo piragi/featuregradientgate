@@ -165,13 +165,13 @@ Always record in `AGENTS.md`:
 This tracker is a required, evolving log for project state and near-term execution. Update it after every successful commit.
 
 - Program branch: `feature/team-research-restructure-plan`
-- Last successful commit reflected here: `WP-05 on branch wp/WP-05-example-path`
-- What happened most recently: `WP-05 completed — added src/gradcamfaith/examples/minimal_run.py (ExampleConfig dataclass, run_example, main) and README.md. Supports dry-run (no data) and full run. Emits run manifest with resolved config, seed, timestamp, git SHA, and uv.lock reference.`
+- Last successful commit reflected here: `WP-06A on branch wp/WP-06-clarity-cleanup`
+- What happened most recently: `WP-06A completed — produced core responsibility map (docs/refactor/wp06_core_responsibility_map.md) with function inventory, overlap analysis, unused parameter ledger, slice plan (WP-06B-E), and equivalence contract with baseline signatures/lint. Fixed circular import in models/__init__.py (lazy re-export).`
 - Reviewer decision: `pending review`
-- What should happen next: `review WP-05, then assign WP-06 (Targeted Clarity Cleanup)`
-- Immediate next task (concrete): `WP-06: clarity pass on experiments/sweep.py, experiments/case_studies.py, data/download.py`
-- Immediate validation for that task: `ruff ARG001/ARG002 clean, public signatures unchanged, import smokes pass`
-- Known blockers/risks now: `_extract_sae_activations re-export was fixed in WP-04 follow-up commit; full example run requires local data/model assets (dry-run path validates config/manifest without them)`
+- What should happen next: `review WP-06A audit artifact, then proceed with WP-06B (attribution boundary refactor)`
+- Immediate next task (concrete): `WP-06B: annotate adapter/core roles, extract _postprocess_attribution, remove unused device param from apply_gradient_gating_to_cam`
+- Immediate validation for that task: `public signature check unchanged, import smokes pass, numeric equivalence max_diff == 0.0 on synthetic gate tensor`
+- Known blockers/risks now: `kappa and clamp_max in compute_feature_gradient_gate are plumbed through config but silently ignored (active formula uses hardcoded 10 ** tanh). Requires maintainer decision: retain as reserved with comment, or re-wire into active formula.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
 
 ### Decision Log
@@ -198,6 +198,10 @@ This tracker is a required, evolving log for project state and near-term executi
 - **WP-05**: Added `src/gradcamfaith/examples/README.md` with exact `uv` commands, explore/paper mode documentation, prerequisites, and expected output tree.
 - **WP-05**: Run manifest emits `resolved_config`, `seed`, `timestamp`, `git_sha`, and `environment_lock` per the Research Interface Policy reproducibility requirements.
 - **WP-05**: Heavy imports (torch, model loading) are deferred until after dry-run check, so `--dry-run` completes instantly without GPU or model dependencies.
+- **WP-05 review**: Accepted. Two issues fixed: root-module imports in example (now uses `gradcamfaith.data` and `gradcamfaith.models` re-exports), stale AGENTS.md next steps.
+- **WP-06A**: Produced `docs/refactor/wp06_core_responsibility_map.md` — complete function inventory (8 attribution, 2 gating), overlap analysis for both function pairs, unused parameter ledger (3 findings: `device`, `kappa`, `clamp_max`), slice plan (WP-06B through WP-06E), and equivalence contract with baseline signatures and lint results.
+- **WP-06A**: Fixed circular import in `src/gradcamfaith/models/__init__.py` — eager `from pipeline import run_unified_pipeline` caused circular dependency when import chain passed through `pipeline.py` -> `gradcamfaith.models.load` -> `models/__init__` -> `pipeline`. Converted to lazy `__getattr__` re-export.
+- **WP-06A**: Key finding: `kappa` and `clamp_max` parameters are plumbed through the full config path but have zero effect on output. Active gate formula is `10 ** tanh(s_norm)` (hardcoded); the parameterized formula `clamp_max ** tanh(kappa * s_norm)` is commented out. This is the highest-priority clarity issue.
 
 ## Tooling and Commands
 Preferred command style:
