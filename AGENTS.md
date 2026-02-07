@@ -165,13 +165,13 @@ Always record in `AGENTS.md`:
 This tracker is a required, evolving log for project state and near-term execution. Update it after every successful commit.
 
 - Program branch: `feature/team-research-restructure-plan`
-- Last successful commit reflected here: `WP-03 on branch wp/WP-03-data-setup-split`
-- What happened most recently: `WP-03 completed and reviewed — split setup.py into src/gradcamfaith/data/download.py (9 download functions) and src/gradcamfaith/data/prepare.py (11 prepare/convert functions). Root setup.py remains a compatibility wrapper with main() preserved.`
-- Reviewer decision: `WP-03 accepted with follow-ups (non-blocking): keep setup flow behavior as-is, but align remaining install guidance strings with uv-only policy in a later docs/tooling cleanup commit.`
-- What should happen next: `assign WP-04 (experiments migration) and preserve config-first researcher workflow during move`
-- Immediate next task (concrete): `WP-04: migrate main.py, sae.py, comparsion.py, analysis_feature_case_studies.py into src/gradcamfaith/experiments/`
-- Immediate validation for that task: `root entry scripts still callable via compatibility wrappers`
-- Known blockers/risks now: `experiment scripts have inline configs and are the primary researcher interface; migration must preserve config-first workflow`
+- Last successful commit reflected here: `WP-04 on branch wp/WP-04-experiments-migration`
+- What happened most recently: `WP-04 completed — migrated main.py (3 functions) to experiments/sweep.py, sae.py (2 functions + SWEEP_CONFIG) to experiments/sae_train.py, comparsion.py (14 functions) to experiments/comparison.py (typo fixed), analysis_feature_case_studies.py (14 functions) to experiments/case_studies.py. All root scripts are now compatibility wrappers. Config-first workflow preserved.`
+- Reviewer decision: `pending review`
+- What should happen next: `review WP-04, then assign WP-05 (Example Path)`
+- Immediate next task (concrete): `WP-05: add src/gradcamfaith/examples/minimal_run.py and README.md`
+- Immediate validation for that task: `example imports and runs on a tiny subset with documented uv command`
+- Known blockers/risks now: `none — all experiment scripts migrated and backward-compatible`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
 
 ### Decision Log
@@ -185,6 +185,12 @@ This tracker is a required, evolving log for project state and near-term executi
 - **WP-03**: `data/prepare.py` imports `DatasetConfig`, `COVIDQUEX_CONFIG`, `HYPERKVASIR_CONFIG` from root-level `dataset_config` (not yet migrated). Same sys.path pattern as WP-02.
 - **WP-03 review**: Verified parity against pre-WP-03 `setup.py`: all required moved functions exist, signatures are unchanged, and function bodies match (structural move only).
 - **WP-03 follow-up**: Two user-facing dependency hints still mention `pip install` (`setup.py`, `src/gradcamfaith/data/download.py`). Keep behavior unchanged for now; update wording to `uv`-compatible guidance in a later doc/tooling cleanup task.
+- **WP-04**: `run_single_experiment`, `run_parameter_sweep`, `main` moved from `main.py` to `src/gradcamfaith/experiments/sweep.py`. Import changed: `import config` → `import gradcamfaith.core.config as config`.
+- **WP-04**: `train_single_config`, `main`, `SWEEP_CONFIG` moved from `sae.py` to `src/gradcamfaith/experiments/sae_train.py`. No internal import changes needed.
+- **WP-04**: All 14 functions moved from `comparsion.py` to `src/gradcamfaith/experiments/comparison.py` (typo-safe canonical name). Root `comparsion.py` wrapper preserved for backward compatibility. No internal import changes needed.
+- **WP-04**: All 14 functions moved from `analysis_feature_case_studies.py` to `src/gradcamfaith/experiments/case_studies.py`. Import changed inside `_extract_sae_activations`: `import config` → `import gradcamfaith.core.config as config`.
+- **WP-04**: Config-first workflow preserved — `SWEEP_CONFIG` dict and inline experiment configs remain editable in-file objects. No CLI orchestration introduced.
+- **WP-04**: `seaborn` added as dependency (`uv add seaborn`) — required by `comparsion.py`/`comparison.py` but was missing from pyproject.toml.
 
 ## Tooling and Commands
 Preferred command style:
