@@ -477,7 +477,7 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Assign `WP-05` to one coder with branch name `wp/WP-05-example-path`.
+1. Review `WP-05` on branch `wp/WP-05-example-path`, then assign `WP-06` (Targeted Clarity Cleanup) with branch name `wp/WP-06-clarity-cleanup`.
 2. Require one commit for the workpackage and include validation output summary in the PR description.
 3. Review against `Workpackage Review Checklist`, then update `Feature Tracker (Living)` with accepted result and next assignment.
 

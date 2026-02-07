@@ -108,10 +108,10 @@ def run_example(config: ExampleConfig) -> Dict[str, Any]:
     import torch
 
     from gradcamfaith.core.config import PipelineConfig
+    from gradcamfaith.data import get_dataset_config
+    from gradcamfaith.models import run_unified_pipeline
     from gradcamfaith.models.load import load_model_for_dataset
     from gradcamfaith.models.sae_resources import load_steering_resources
-    from dataset_config import get_dataset_config
-    from pipeline import run_unified_pipeline
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
