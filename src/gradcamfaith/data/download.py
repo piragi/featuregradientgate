@@ -64,7 +64,12 @@ def extract_tar_gz(tar_path: Path, extract_to: Path, remove_after: bool = True) 
     """Extract tar.gz file."""
     try:
         with tarfile.open(tar_path, 'r:gz') as tar_ref:
-            tar_ref.extractall(extract_to)
+            # Python 3.14 defaults to safer extraction filtering; pass it
+            # explicitly when available while staying compatible with 3.10+.
+            try:
+                tar_ref.extractall(extract_to, filter="data")
+            except TypeError:
+                tar_ref.extractall(extract_to)
         if remove_after:
             tar_path.unlink()
     except Exception:
@@ -81,21 +86,23 @@ def download_hyperkvasir(data_dir: Path, models_dir: Path) -> None:
     hk_data_dir.mkdir(exist_ok=True, parents=True)
     hk_models_dir.mkdir(exist_ok=True, parents=True)
 
-    # Download Hyperkvasir dataset
-    dataset_url = "https://datasets.simula.no/downloads/hyper-kvasir/hyper-kvasir-labeled-images.zip"
-    dataset_path = hk_data_dir / "hyper-kvasir-labeled-images.zip"
-
-    if not dataset_path.exists():
-        try:
-            # Try wget first (faster for large files) - disable cert check for Simula server
-            subprocess.run(["wget", "--no-check-certificate", "-O", str(dataset_path), dataset_url], check=True)
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            # Fallback to requests if wget is not available
-            download_with_progress(dataset_url, dataset_path)
-
-    # Extract dataset
     extracted_dir = hk_data_dir / "labeled-images"
-    if not extracted_dir.exists():
+    dataset_ready = extracted_dir.exists() and any(extracted_dir.rglob("*"))
+
+    if dataset_ready:
+        print(f"Hyperkvasir dataset already present at {extracted_dir}; skipping dataset download.")
+    else:
+        dataset_url = "https://datasets.simula.no/downloads/hyper-kvasir/hyper-kvasir-labeled-images.zip"
+        dataset_path = hk_data_dir / "hyper-kvasir-labeled-images.zip"
+
+        if not dataset_path.exists():
+            try:
+                # Try wget first (faster for large files) - disable cert check for Simula server
+                subprocess.run(["wget", "--no-check-certificate", "-O", str(dataset_path), dataset_url], check=True)
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                # Fallback to requests if wget is not available
+                download_with_progress(dataset_url, dataset_path)
+
         extract_zip(dataset_path, hk_data_dir)
 
     # Download Hyperkvasir model
@@ -329,7 +336,7 @@ def download_thesis_saes(data_dir: Path) -> None:
         else:
             print(f"✗ Failed to download {zip_filename}")
 
-    print(f"✓ Thesis SAE setup complete.")
+    print("✓ Thesis SAE setup complete.")
 
 def download_sae_checkpoints(data_dir: Path) -> None:
     """Download SAE checkpoints from HuggingFace for all layers."""
@@ -383,7 +390,7 @@ def download_sae_checkpoints(data_dir: Path) -> None:
             try:
                 config_path = hf_hub_download(repo_id=repo_id, filename="config.json", cache_dir="./hf_cache")
                 shutil.copy(config_path, target_dir / "config.json")
-            except:
+            except Exception:
                 pass
 
             successful_layers.append(layer_num)

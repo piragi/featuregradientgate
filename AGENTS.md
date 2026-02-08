@@ -174,14 +174,14 @@ This tracker is a required, evolving log for project state and near-term executi
 
 - Program branch: `feature/team-research-restructure-plan`
 - Branching mode: `slice branches + immediate integration + accepted checkpoint tags`
-- Last successful commit reflected here: `WP-06A on branch wp/WP-06-clarity-cleanup (pending integration checkpoint tag)`
+- Last successful commit reflected here: `WP-06 validation harness + setup guardrails slice on branch wp/WP-06-clarity-cleanup (pending review and integration checkpoint tracking)`
 - Last accepted integration checkpoint: `not yet recorded for WP-06A in this tracker`
-- What happened most recently: `WP-06A completed — produced core responsibility map (docs/refactor/wp06_core_responsibility_map.md) with function inventory, overlap analysis, unused parameter ledger, slice plan (WP-06B-E), and equivalence contract with baseline signatures/lint. Fixed circular import in models/__init__.py (lazy re-export).`
+- What happened most recently: `Added validation stack for fresh environments plus setup hardening: smoke tests (`tests/test_smoke_contracts.py`, `tests/test_sweep_reproducibility.py`), opt-in heavy integration tests (`tests/test_integration_fresh_env.py`), git workflow audit script (`scripts/validation/git_workflow_audit.py`), runbook (`docs/validation/fresh_environment_validation.md`), and download guardrails in `src/gradcamfaith/data/download.py` (safe tar extraction fallback + HyperKvasir idempotent dataset skip).`
 - Reviewer decision: `pending review`
-- What should happen next: `record WP-06A accepted integration checkpoint, then proceed with WP-06B (attribution boundary refactor) from integration HEAD`
-- Immediate next task (concrete): `integrate accepted WP-06A commit(s) into feature/team-research-restructure-plan, tag checkpoint (example: accepted/wp-06a), then open wp/WP-06B-attribution-boundary-refactor`
-- Immediate validation for that task: `public signature check unchanged, import smokes pass, numeric equivalence max_diff == 0.0 on synthetic gate tensor`
-- Known blockers/risks now: `none — kappa/clamp_max resolved in WP-06A follow-up (kappa removed from gate chain, clamp_max wired into formula with default 10.0)`
+- What should happen next: `run Tier-1 validation in every fresh checkout; run Tier-2 full-stack validation on credentialed CUDA hosts; then integrate accepted validation slice into feature/team-research-restructure-plan with accepted checkpoint tag.`
+- Immediate next task (concrete): `execute docs/validation/fresh_environment_validation.md commands (Tier-1 immediately, Tier-2 when credentials/GPU available), attach evidence artifacts, then proceed to WP-06B from integration HEAD.`
+- Immediate validation for that task: `git workflow audit passes, smoke pytest passes, dry-run manifest written, seed reproducibility check passes for sweep orchestration, and full-stack asset setup check passes after setup hardening.`
+- Known blockers/risks now: `integration branch/tag state is not yet visible in this environment (audit currently flags missing feature/team-research-restructure-plan and accepted/* tags).`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
 
 ### Decision Log
@@ -214,6 +214,14 @@ This tracker is a required, evolving log for project state and near-term executi
 - **WP-06A**: Key finding: `kappa` and `clamp_max` parameters are plumbed through the full config path but have zero effect on output. Active gate formula is `10 ** tanh(s_norm)` (hardcoded); the parameterized formula `clamp_max ** tanh(kappa * s_norm)` is commented out. This is the highest-priority clarity issue.
 - **WP-06A follow-up**: Maintainer decision on kappa/clamp_max: (1) `kappa` removed from `compute_feature_gradient_gate` signature and full config-to-gate chain; retained in `PipelineConfig` as sweep metadata only. (2) `clamp_max` wired into active gate formula: `clamp_max ** tanh(s_norm)` with default 10.0 (matching previous hardcoded value). Numeric equivalence verified: max_diff == 0.0. ARG001 findings reduced from 5 to 3. `kappa` removed from `ExampleConfig` in `minimal_run.py`.
 - **Process update**: Delivery model switched from long-lived workpackage branches to slice-scoped branches with immediate integration into `feature/team-research-restructure-plan` and accepted checkpoint tags (`accepted/wp-06a`, `accepted/wp-06b`, ...).
+- **Validation slice (fresh-env readiness)**: Added `tests/test_smoke_contracts.py` (API import/signature contracts, example manifest contract, deterministic gate checks) and `tests/test_sweep_reproducibility.py` (seeded sweep orchestration checks with mocked heavy dependencies) as baseline reproducibility guards before logic refactors.
+- **Validation slice (heavy integration)**: Added `tests/test_integration_fresh_env.py` with opt-in `GRADCAMFAITH_RUN_FULL_STACK=1` checks for full asset setup and seeded sample sweep reproducibility. Documented CUDA requirement for current SAE loader path.
+- **Workflow governance**: Added `scripts/validation/git_workflow_audit.py` to enforce branch naming, integration-branch visibility, worktree cleanliness, and accepted checkpoint tag visibility against AGENTS workflow policy.
+- **Validation runbook**: Added `docs/validation/fresh_environment_validation.md` with Tier-1 (always-run smoke) and Tier-2 (heavy integration) `uv` command matrix plus evidence requirements.
+- **Validation follow-up (setup hardening)**: `extract_tar_gz` now prefers `extractall(..., filter="data")` with compatibility fallback for runtimes that do not support the `filter` argument (keeps Python 3.10+ compatibility while addressing Python 3.14 warning).
+- **Validation follow-up (idempotent downloads)**: `download_hyperkvasir` now skips 3.7GB dataset re-download when `data/hyperkvasir/labeled-images` is already present and non-empty; model checkpoint download behavior is unchanged.
+- **Validation follow-up (tests)**: Added `tests/test_download_guardrails.py` to assert tar extraction fallback behavior and HyperKvasir dataset skip behavior.
+- **Validation follow-up (git hygiene)**: Added root `.gitignore` entries for `/models` and `/logs` so full-stack setup/test runs do not leave untracked runtime artifacts that block clean-worktree handoff checks.
 
 ## Tooling and Commands
 Preferred command style:
@@ -225,7 +233,16 @@ Preferred command style:
 Keep command examples in docs using `uv` only.
 
 ## Validation While Tests Are Deferred
-Since tests are postponed, each structural task must include a minimal smoke validation:
+Full test coverage is still deferred, but baseline validation now exists. Each structural task must include:
+- Tier-1 smoke tests:
+  - `uv run pytest tests/test_smoke_contracts.py tests/test_sweep_reproducibility.py`
+  - `uv run python -m gradcamfaith.examples.minimal_run --dry-run`
+- Git workflow audit:
+  - `uv run python scripts/validation/git_workflow_audit.py`
+- Tier-2 heavy integration (opt-in on credentialed CUDA hosts):
+  - `GRADCAMFAITH_RUN_FULL_STACK=1 uv run pytest -m integration tests/test_integration_fresh_env.py`
+
+At minimum, structural tasks must still include minimal smoke validation:
 - Module import sanity (`uv run python -c "..."`).
 - At least one representative command path still executes.
 - If behavior changes intentionally, document it in commit summary and `AGENTS.md`.

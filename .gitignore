@@ -20,3 +20,5 @@ wandb/
 /data
 /experiments
 /hf_cache
+/models
+/logs
