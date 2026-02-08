@@ -9,29 +9,17 @@ def _param_names(func):
     return list(inspect.signature(func).parameters.keys())
 
 
-def test_root_and_package_api_imports():
-    import analysis_feature_case_studies  # noqa: F401
-    import comparsion  # noqa: F401
-    import config  # noqa: F401
-    import data_types  # noqa: F401
-    import feature_gradient_gating  # noqa: F401
-    import main  # noqa: F401
-    import sae  # noqa: F401
+def test_package_api_imports():
+    """All public APIs are importable from their canonical package paths."""
     import setup  # noqa: F401
-    import transmm  # noqa: F401
 
-    from analysis_feature_case_studies import run_case_study_analysis
-    from comparsion import main as comparison_main
-    from main import run_parameter_sweep, run_single_experiment
     from pipeline import load_model_for_dataset, load_steering_resources, run_unified_pipeline
-    from sae import SWEEP_CONFIG, train_single_config
     from setup import convert_dataset
 
-    from gradcamfaith.experiments.case_studies import run_case_study_analysis as pkg_run_case_study_analysis
-    from gradcamfaith.experiments.comparison import main as pkg_comparison_main
-    from gradcamfaith.experiments.sae_train import train_single_config as pkg_train_single_config
-    from gradcamfaith.experiments.sweep import run_parameter_sweep as pkg_run_parameter_sweep
-    from gradcamfaith.experiments.sweep import run_single_experiment as pkg_run_single_experiment
+    from gradcamfaith.experiments.case_studies import run_case_study_analysis
+    from gradcamfaith.experiments.comparison import main as comparison_main
+    from gradcamfaith.experiments.sae_train import SWEEP_CONFIG, train_single_config
+    from gradcamfaith.experiments.sweep import run_parameter_sweep, run_single_experiment, SweepConfig
 
     assert callable(run_single_experiment)
     assert callable(run_parameter_sweep)
@@ -43,20 +31,15 @@ def test_root_and_package_api_imports():
     assert callable(load_model_for_dataset)
     assert callable(load_steering_resources)
     assert isinstance(SWEEP_CONFIG, dict)
-
-    assert callable(pkg_run_single_experiment)
-    assert callable(pkg_run_parameter_sweep)
-    assert callable(pkg_train_single_config)
-    assert callable(pkg_comparison_main)
-    assert callable(pkg_run_case_study_analysis)
+    assert callable(SweepConfig)
 
 
 def test_public_signature_contracts():
-    from analysis_feature_case_studies import run_case_study_analysis
-    from comparsion import main as comparison_main
-    from main import run_parameter_sweep, run_single_experiment
+    from gradcamfaith.experiments.case_studies import run_case_study_analysis
+    from gradcamfaith.experiments.comparison import main as comparison_main
+    from gradcamfaith.experiments.sae_train import train_single_config
+    from gradcamfaith.experiments.sweep import run_parameter_sweep, run_single_experiment
     from pipeline import load_model_for_dataset, load_steering_resources, run_unified_pipeline
-    from sae import train_single_config
     from setup import convert_dataset
 
     assert _param_names(run_single_experiment) == [

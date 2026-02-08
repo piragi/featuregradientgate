@@ -14,8 +14,8 @@ import numpy as np
 import torch
 from PIL import Image
 
-from config import PipelineConfig
-from data_types import ClassificationResult
+from gradcamfaith.core.config import PipelineConfig
+from gradcamfaith.core.types import ClassificationResult
 from dataset_config import get_dataset_config
 
 

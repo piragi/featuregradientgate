@@ -49,23 +49,20 @@ For concurrent paper release:
 - Next slice always branches from the new integration HEAD after the accepted checkpoint is in.
 - Promotion to `main` happens later as a separate integration decision after workpackage validation.
 
-## Current Repo Snapshot (as of this plan)
-- Active tracked code is flat at repo root (`main.py`, `pipeline.py`, `transmm.py`, `feature_gradient_gating.py`, `setup.py`, etc.).
-- `src/gradcamfaith/core/` now contains tracked source files from WP-01:
-  - `src/gradcamfaith/core/attribution.py`
-  - `src/gradcamfaith/core/gating.py`
-  - `src/gradcamfaith/core/config.py`
-  - `src/gradcamfaith/core/types.py`
-- Root compatibility wrappers are now active for migrated modules:
-  - `transmm.py`
-  - `feature_gradient_gating.py`
-  - `config.py`
-  - `data_types.py`
-- Major concerns are mixed in single files:
-  - Core method math + hook orchestration.
-  - Experiment sweep orchestration.
-  - Dataset download + dataset conversion.
-  - Analysis scripts and plotting.
+## Current Repo Snapshot (post WP-07)
+- Root compatibility wrappers have been **removed** (WP-07): `main.py`, `transmm.py`, `feature_gradient_gating.py`, `config.py`, `data_types.py`, `comparsion.py`, `analysis_feature_case_studies.py`, `sae.py`.
+- Deprecated attribution shims (`transmm_prisma_enhanced`, `generate_attribution_prisma_enhanced`) have been **removed** from `core/attribution.py`.
+- Remaining root-level real code (not yet migrated to package):
+  - `pipeline.py` — runtime orchestrator (`run_unified_pipeline`, `classify_single_image`, etc.). Imports updated to use `gradcamfaith.core.*` package paths.
+  - `dataset_config.py` — dataset configuration registry and transforms.
+  - `clip_classifier.py` — CLIP zero-shot classification wrappers.
+  - `faithfulness.py`, `saco.py`, `io_utils.py`, `unified_dataloader.py`, `setup.py` — supporting modules. Imports updated to use `gradcamfaith.core.*` package paths.
+- Package code (`src/gradcamfaith/`) is the canonical source for all migrated modules:
+  - `core/` — attribution, gating, config, types
+  - `experiments/` — sweep, sae_train, comparison, case_studies
+  - `data/` — download, prepare
+  - `models/` — load, sae_resources
+  - `examples/` — minimal_run
 
 ## Target Structure
 Use a real package layout under `src/gradcamfaith` with clear boundaries:
@@ -174,18 +171,19 @@ This tracker is a required, evolving log for project state and near-term executi
 
 - Program branch: `feature/team-research-restructure-plan`
 - Branching mode: `slice branches + immediate integration + accepted checkpoint tags`
-- Last successful commit reflected here: `WP-06D on wp/WP-06D-sweep-readability, pending integration`
-- Last accepted integration checkpoint: `accepted/wp-06c`
+- Last successful commit reflected here: `WP-07 on wp/WP-07-legacy-removal, pending integration`
+- Last accepted integration checkpoint: `accepted/wp-06d`
 - WP-06B status: `done and accepted`
 - WP-06C status: `done and accepted`
-- WP-06D status: `done, pending integration — sweep.py rewritten with 8 focused helpers + SweepConfig dataclass. Public signatures unchanged. All 14 tests pass.`
-- What happened most recently: `WP-06D: sweep.py rewritten from 3 functions (492 lines) to 8 helpers + 3 public functions + SweepConfig dataclass. main() now config-first with **asdict(cfg) unpacking.`
-- Reviewer decision: `accepted`
-- What should happen next: `integrate WP-06D, then WP-07: thorough legacy removal + resource extraction.`
-- Immediate next task (concrete): `WP-07: remove legacy compatibility wrappers, deprecated shims, and extract resource lifecycle management out of sweep.py. See WP-07 concrete plan below.`
-- Immediate validation for that task: `all existing tests pass after updating them to use package paths. Root wrapper import tests removed or updated.`
+- WP-06D status: `done and accepted`
+- WP-07 status: `done, pending integration — 8 root wrappers deleted, deprecated attribution shims removed, all imports updated to package paths. All 14 tests pass.`
+- What happened most recently: `WP-07: removed 8 root compatibility wrappers, deleted transmm_prisma_enhanced and generate_attribution_prisma_enhanced from attribution.py, updated pipeline.py/faithfulness.py/io_utils.py/saco.py imports to package paths, rewrote both test files for package-only imports.`
+- Reviewer decision: `pending`
+- What should happen next: `integrate WP-07, then plan next slice (resource extraction from sweep.py or further cleanup).`
+- Immediate next task (concrete): `integrate WP-07 into feature/team-research-restructure-plan, tag accepted/wp-07.`
+- Immediate validation for that task: `all 14 tests pass with uv run pytest tests/.`
 - Known blockers/risks now: `none`
-- Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ as part of WP-07.`
+- Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ in a future WP.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
 
 ### WP-06D Concrete Plan (`experiments/sweep.py`)
@@ -268,6 +266,7 @@ Hard constraints:
 - **WP-06C (gating boundary refactor)**: Extracted 4 private helpers from `core/gating.py`: `_extract_decoder` (SAE decoder dispatch), `_compute_patch_scores` (4-branch gate construction), `_collect_gate_debug_info` (sparse feature debug collection), `_apply_gate_to_cam` (CLS-aware gate application + delta computation). Public function bodies reduced to clear sequential steps. Gate equivalence: max_diff == 0.0. All 11 tests pass.
 - **Intermediate (golden-value regression test)**: Added `test_imagenet_golden_faithfulness_values` to `tests/test_integration_fresh_env.py`. Full-stack test runs imagenet val split, subset=500, seed=123, combined gate, layer [3], kappa=0.5, clamp_max=10.0 via `run_parameter_sweep`. Asserts exact golden values for SaCo (mean/std), PixelFlipping (count/mean/median), and FaithfulnessCorrelation (count/mean/median). Explicit cleanup via `shutil.rmtree` in `finally` block. Gated behind `GRADCAMFAITH_RUN_FULL_STACK=1` + CUDA.
 - **WP-06D (sweep readability rewrite)**: Extracted 8 helpers from `experiments/sweep.py`: `_gpu_cleanup` (centralized GC/CUDA), `_print_gpu_memory` (GPU memory reporting), `_build_pipeline_config` (PipelineConfig construction), `_build_experiment_grid` (vanilla + gated param grid), `_build_imagenet_clip_prompts` (article-aware CLIP prompts), `_load_dataset_resources` (model/CLIP/SAE loading), `_release_dataset_resources` (teardown), `_summarize_result` (result extraction). Added `SweepConfig` dataclass matching `run_parameter_sweep` parameters 1:1 for `**asdict(cfg)` unpacking. `main()` simplified to config-first pattern. Public signatures unchanged. All 14 tests pass. Deferred: resource lifecycle helpers still in sweep.py — should move to `models/` in WP-07.
+- **WP-07 (legacy removal and thorough refactor)**: Deleted 8 root compatibility wrappers (`main.py`, `transmm.py`, `feature_gradient_gating.py`, `config.py`, `data_types.py`, `comparsion.py`, `analysis_feature_case_studies.py`, `sae.py`). Removed deprecated `transmm_prisma_enhanced` and `generate_attribution_prisma_enhanced` from `core/attribution.py` (along with unused `import warnings` and `HookedSAEViT` import). Updated 4 root files to package imports: `pipeline.py` (`config`→`gradcamfaith.core.config`, `data_types`→`gradcamfaith.core.types`), `faithfulness.py` (same), `io_utils.py` (`data_types`→`gradcamfaith.core.types`), `saco.py` (same). Rewrote `test_smoke_contracts.py` to package-only imports (removed all root wrapper import tests, added `SweepConfig` to import check). Rewrote `test_attribution_boundary_contracts.py` (removed `test_legacy_wrappers_deprecated`, added `test_deprecated_shims_removed`). All 14 tests pass. Resource extraction from sweep.py deferred to future WP.
 
 ## Tooling and Commands
 Preferred command style:

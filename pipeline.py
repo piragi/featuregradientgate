@@ -17,8 +17,8 @@ from tqdm import tqdm
 logging.getLogger('PIL').setLevel(logging.WARNING)
 
 import io_utils
-from config import FileConfig, PipelineConfig
-from data_types import (AttributionDataBundle, AttributionOutputPaths, ClassificationPrediction, ClassificationResult)
+from gradcamfaith.core.config import FileConfig, PipelineConfig
+from gradcamfaith.core.types import (AttributionDataBundle, AttributionOutputPaths, ClassificationPrediction, ClassificationResult)
 # New imports for unified system
 from dataset_config import DatasetConfig, get_dataset_config
 from faithfulness import evaluate_and_report_faithfulness

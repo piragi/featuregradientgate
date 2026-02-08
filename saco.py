@@ -23,7 +23,7 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from data_types import ClassificationResult
+from gradcamfaith.core.types import ClassificationResult
 
 
 def batched_model_inference(model_instance,

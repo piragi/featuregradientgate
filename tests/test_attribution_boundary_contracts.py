@@ -1,19 +1,15 @@
 """WP-06B-R3 contract tests for the compute_attribution canonical API."""
 
 import inspect
-import warnings
 
 import pytest
 
 
 def test_compute_attribution_exists():
-    """compute_attribution is importable from both package and root wrapper."""
+    """compute_attribution is importable from the canonical package path."""
     from gradcamfaith.core.attribution import compute_attribution
-    from transmm import compute_attribution as root_compute_attribution
 
     assert callable(compute_attribution)
-    assert callable(root_compute_attribution)
-    assert compute_attribution is root_compute_attribution
 
 
 def test_compute_attribution_output_contract():
@@ -69,70 +65,9 @@ def test_pipeline_uses_compute_attribution():
     assert "transmm_prisma_enhanced" not in imported_names
 
 
-def test_legacy_wrappers_deprecated():
-    """Legacy entrypoints exist but emit DeprecationWarning when called.
+def test_deprecated_shims_removed():
+    """Legacy entrypoints have been removed from the attribution module (WP-07)."""
+    import gradcamfaith.core.attribution as attr_module
 
-    We only verify the warning is emitted; we don't call with real models.
-    """
-    from gradcamfaith.core.attribution import (
-        generate_attribution_prisma_enhanced,
-        transmm_prisma_enhanced,
-    )
-
-    # Check docstrings mention DEPRECATED
-    assert "DEPRECATED" in (transmm_prisma_enhanced.__doc__ or "")
-    assert "DEPRECATED" in (generate_attribution_prisma_enhanced.__doc__ or "")
-
-    # Verify that calling them would emit deprecation warnings.
-    # We can't call with real args, but we can patch compute_attribution
-    # to verify the delegation path.
-    import unittest.mock as mock
-
-    sentinel = {
-        "predictions": {},
-        "attribution_positive": None,
-        "raw_attribution": None,
-        "debug_info": {},
-    }
-
-    with mock.patch(
-        "gradcamfaith.core.attribution.compute_attribution", return_value=sentinel
-    ) as mocked:
-        # transmm_prisma_enhanced should warn and delegate
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            result = transmm_prisma_enhanced(
-                model_prisma=mock.MagicMock(),
-                input_tensor=mock.MagicMock(),
-                config=mock.MagicMock(),
-                idx_to_class={},
-            )
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "compute_attribution" in str(w[0].message)
-
-        assert mocked.called
-        # Returns 4-tuple from dict
-        assert isinstance(result, tuple) and len(result) == 4
-
-        mocked.reset_mock()
-
-        # generate_attribution_prisma_enhanced should warn and delegate
-        mock_config = mock.MagicMock()
-        mock_config.classify.boosting.debug_mode = False
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            result = generate_attribution_prisma_enhanced(
-                model=mock.MagicMock(),
-                input_tensor=mock.MagicMock(),
-                config=mock_config,
-                idx_to_class={},
-            )
-            assert len(w) == 1
-            assert issubclass(w[0].category, DeprecationWarning)
-            assert "compute_attribution" in str(w[0].message)
-
-        assert mocked.called
-        # Returns dict directly
-        assert isinstance(result, dict)
+    assert not hasattr(attr_module, "transmm_prisma_enhanced")
+    assert not hasattr(attr_module, "generate_attribution_prisma_enhanced")
