@@ -1,6 +1,7 @@
 """Compatibility wrapper — canonical source is gradcamfaith.core.attribution"""
 from gradcamfaith.core.attribution import *  # noqa: F401,F403
 from gradcamfaith.core.attribution import (  # noqa: F401
+    compute_attribution,
     apply_gradient_gating_to_cam,
     compute_layer_attribution,
     avg_heads,

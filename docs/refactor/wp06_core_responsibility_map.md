@@ -32,7 +32,14 @@ This document must be updated in each accepted WP-06 slice.
 - CLI surface changes
 
 ## Public Interface Contract
-The following public functions are compatibility-critical and must remain import-stable unless explicitly approved:
+Baseline contract (WP-06A):
+the following public functions were treated as compatibility-critical.
+
+Maintainer update (2026-02-08, WP-06B-R3):
+- clean API rewrite is explicitly approved for attribution entrypoints
+- `compute_attribution` becomes canonical
+- legacy attribution entrypoints may be removed or retained as deprecated shims
+- gating entrypoints remain signature-stable
 
 ### `src/gradcamfaith/core/attribution.py`
 - `transmm_prisma_enhanced`
@@ -47,7 +54,8 @@ The following public functions are compatibility-critical and must remain import
 ### Attribution Module Inventory
 | Function | Primary Responsibility Tag | Secondary Responsibility Tags | Inputs Used? | Overlap Candidate | Notes |
 |---|---|---|---|---|---|
-| `apply_gradient_gating_to_cam` | `ADAPTER` | `I/O_PACKING` | `device` unused (see ledger) | yes — paired with `apply_feature_gradient_gating` | Extracts per-layer hook data from dicts, unpacks `PipelineConfig` into flat config dict, delegates to `gating.apply_feature_gradient_gating`. Adapter role is valid but undocumented. |
+| `apply_gradient_gating_to_cam` | `ADAPTER` | `I/O_PACKING` | all used (`device` removed in WP-06B) | yes — paired with `apply_feature_gradient_gating` | Extracts per-layer hook data from dicts, unpacks `PipelineConfig` into flat config dict, delegates to `gating.apply_feature_gradient_gating`. Adapter role now documented in docstring. |
+| `_postprocess_attribution` (new in WP-06B) | `OUTPUT_FORMATTING` | — | all used | no | Reshape patch vector to spatial map, bilinear interpolate to image size, min-max normalize. Extracted from `transmm_prisma_enhanced` to separate output formatting from orchestration. |
 | `compute_layer_attribution` | `ORCHESTRATOR` | — | all used | no | Iterates all transformer layers, computes gradient-weighted attention CAMs via `avg_heads`, conditionally applies gating at configured layers, accumulates self-attention rollout matrix. |
 | `avg_heads` | `PURE_MATH` | — | all used | no | `grad * cam`, clamp positive, mean across heads. 5 lines, clean. |
 | `apply_self_attention_rules` | `PURE_MATH` | — | all used | no | Single `torch.matmul` for self-attention propagation rule. 2 lines, clean. |
@@ -101,7 +109,7 @@ Extract debug collection from `compute_feature_gradient_gate` into a private hel
 
 | File:Function | Parameter | State | Proposed Action | Rationale |
 |---|---|---|---|---|
-| `core/attribution.py:apply_gradient_gating_to_cam` | `device` | `unused` | `remove_internal` | Function never references it. Device is obtained from `cam_pos_avg.device` downstream. `apply_gradient_gating_to_cam` is internal (only called by `compute_layer_attribution`), so removing the parameter has no external API impact. Caller already has `device` available and doesn't need to pass it. |
+| `core/attribution.py:apply_gradient_gating_to_cam` | `device` | **RESOLVED: removed** | removed in WP-06B | Function never referenced it. Device is obtained from `cam_pos_avg.device` downstream. Internal-only function (called only by `compute_layer_attribution`), so removal has no external API impact. |
 | `core/gating.py:compute_feature_gradient_gate` | `kappa` | **RESOLVED: removed** | removed per maintainer decision | Removed from `compute_feature_gradient_gate` signature and full config chain. Retained in `PipelineConfig` as sweep metadata only (used for experiment naming in sweep.py/comparison.py). |
 | `core/gating.py:compute_feature_gradient_gate` | `clamp_max` | **RESOLVED: wired in** | wired into active formula per maintainer decision | Formula changed from hardcoded `10 ** tanh(s_norm)` to `clamp_max ** tanh(s_norm)` with default 10.0. Numeric equivalence verified: max_diff == 0.0 with default value. |
 | `core/gating.py:compute_feature_gradient_gate` | `residual` | `conditionally_used` | no action needed | Only used when `gate_construction == "no_SAE"` (L77-80). This is correct behavior — `no_SAE` mode uses raw `residual * residual_grad` instead of SAE-decomposed contributions. |
@@ -112,7 +120,7 @@ Extract debug collection from `compute_feature_gradient_gate` into a private hel
 
 | Slice | Target Files | Planned Changes | Public Signature Impact | Risk | Validation |
 |---|---|---|---|---|---|
-| `WP-06B` | `core/attribution.py` | (1) Annotate adapter/core roles in docstrings for `transmm_prisma_enhanced` and `generate_attribution_prisma_enhanced`. (2) Extract post-processing (reshape/interpolate/normalize) from `transmm_prisma_enhanced` into `_postprocess_attribution`. (3) Remove unused `device` parameter from internal `apply_gradient_gating_to_cam` and its call site. | none (only internal function touched) | low | Signature check + import smoke + numeric equivalence on synthetic gate tensor |
+| `WP-06B` **DONE (v1+R3)** | `core/attribution.py`, `pipeline.py`, `transmm.py` | `compute_attribution` is canonical orchestrator (dict output). `pipeline.py` migrated. Legacy `transmm_prisma_enhanced`/`generate_attribution_prisma_enhanced` are deprecated shims with `DeprecationWarning`, removal planned for WP-07. `_postprocess_attribution` extracted. Internal `device` param removed from `apply_gradient_gating_to_cam`. ARG001: 3→2. | intentional API cleanup (approved by maintainer, WP-06B-R3 spec) | medium | 11/11 tests pass, gate equivalence max_diff==0.0, call-site migration verified (no legacy imports in pipeline.py) |
 | `WP-06C` | `core/gating.py` | (1) Extract debug collection from `compute_feature_gradient_gate` into `_collect_gate_debug_info`. (2) Optionally extract score construction dispatch into `_compute_patch_scores`. | none | low | Signature check + import smoke + numeric equivalence on synthetic gate tensor |
 | `WP-06D` | `experiments/sweep.py`, `experiments/case_studies.py` | Split oversized orchestration functions into small private helpers. Preserve external behavior and output locations. | none | low | Signature check + import smoke |
 | `WP-06E` | `data/download.py` and all touched modules | Clear remaining `ARG001`/`ARG002` findings: `description` in `download_from_gdrive`, `models_dir` in `download_imagenet`. Remove or annotate intentionally retained compatibility parameters. | depends on findings | low | `uvx ruff check --select ARG001,ARG002` clean |
@@ -191,11 +199,10 @@ Run:
 uvx ruff check src/gradcamfaith/core src/gradcamfaith/experiments src/gradcamfaith/data --select ARG001,ARG002
 ```
 
-Baseline result (WP-06A, 5 findings -> 3 after kappa/clamp_max fix):
+Baseline result (WP-06A: 5 -> 3; WP-06B: 3 -> 2):
 ```
-src/gradcamfaith/core/attribution.py:20:76  ARG001 Unused function argument: `device`
 src/gradcamfaith/data/download.py:39:59     ARG001 Unused function argument: `description`
-src/gradcamfaith/data/download.py:112:39    ARG001 Unused function argument: `models_dir`
+src/gradcamfaith/data/download.py:119:39    ARG001 Unused function argument: `models_dir`
 ```
 
 ### 4. Path Smokes
@@ -233,3 +240,8 @@ Decision:
 
 Notes:
 (pending review)
+
+## WP-06B Review Update (2026-02-08)
+- Maintainer review outcome for WP-06B v1: `rework requested`
+- Required follow-up: clean API rewrite per `docs/refactor/wp06b_attribution_boundary_spec.md` (`compute_attribution` canonical; internal call-site migration; legacy transmm/generate signatures no longer required to remain stable).
+- Rationale: naming and responsibility clarity are still insufficient while two legacy entrypoints dominate the boundary.

@@ -24,7 +24,7 @@ from dataset_config import DatasetConfig, get_dataset_config
 from faithfulness import evaluate_and_report_faithfulness
 from saco import run_binned_attribution_analysis
 from setup import convert_dataset
-from transmm import generate_attribution_prisma_enhanced
+from gradcamfaith.core.attribution import compute_attribution
 from unified_dataloader import create_dataloader, get_single_image_loader
 
 # Compatibility re-exports — canonical source is now in gradcamfaith.models.*
@@ -160,8 +160,8 @@ def classify_explain_single_image(
     input_tensor = get_single_image_loader(image_path, dataset_config, use_clip=use_clip)
     input_tensor = input_tensor.to(device)
 
-    raw_attribution_result_dict = generate_attribution_prisma_enhanced(
-        model=model,
+    raw_attribution_result_dict = compute_attribution(
+        model_prisma=model,
         input_tensor=input_tensor,
         config=config,
         idx_to_class=dataset_config.idx_to_class,  # Pass dataset-specific class mapping
@@ -171,6 +171,7 @@ def classify_explain_single_image(
         feature_gradient_layers=config.classify.boosting.feature_gradient_layers
         if config.classify.boosting.enable_feature_gradients else [],
         clip_classifier=clip_classifier,
+        debug=getattr(config.classify.boosting, 'debug_mode', False),
     )
 
     # Extract raw attribution and debug info

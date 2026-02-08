@@ -1,8 +1,24 @@
 """
-Enhanced TransLRP with Feature Gradient Gating
-Integrates SAE feature gradients for improved faithfulness
+Attribution module — TransLRP with optional feature-gradient gating.
+
+Public API:
+    compute_attribution  — canonical orchestrator (returns dict)
+
+Internal helpers:
+    apply_gradient_gating_to_cam  — adapter into core/gating.py
+    compute_layer_attribution     — per-layer attention rollout loop
+    avg_heads                     — gradient-weighted head averaging
+    apply_self_attention_rules    — self-attention propagation rule
+    run_model_forward_backward    — forward/backward with hook data
+    setup_hooks                   — hook wiring for vit_prisma
+    _postprocess_attribution      — reshape/interpolate/normalize output
+
+Deprecated (delegate to compute_attribution):
+    transmm_prisma_enhanced
+    generate_attribution_prisma_enhanced
 """
 
+import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -15,11 +31,15 @@ from gradcamfaith.core.config import PipelineConfig
 from gradcamfaith.core.gating import apply_feature_gradient_gating
 
 
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
 def apply_gradient_gating_to_cam(
     cam_pos_avg: torch.Tensor, layer_idx: int, gradients: Dict[str, torch.Tensor], residuals: Dict[int, torch.Tensor],
-    steering_resources: Dict[int, Dict[str, Any]], config: PipelineConfig, device: torch.device, debug: bool = False
+    steering_resources: Dict[int, Dict[str, Any]], config: PipelineConfig, debug: bool = False
 ) -> Tuple[torch.Tensor, Dict[str, Any]]:
-    """Apply feature gradient gating to a CAM tensor at a specific layer."""
+    """Adapter: unpack hook data and PipelineConfig, delegate to gating.apply_feature_gradient_gating."""
     resid_grad_key = f"blocks.{layer_idx}.hook_resid_post_grad"
 
     if resid_grad_key not in gradients or layer_idx not in residuals:
@@ -86,7 +106,7 @@ def compute_layer_attribution(
         # Apply feature gradient gating if configured
         if (i in feature_gradient_layers and steering_resources is not None and i in steering_resources):
             cam_pos_avg, layer_debug = apply_gradient_gating_to_cam(
-                cam_pos_avg, i, gradients, residuals, steering_resources, config, device, debug=debug
+                cam_pos_avg, i, gradients, residuals, steering_resources, config, debug=debug
             )
             if debug:
                 debug_info_per_layer[i] = layer_debug
@@ -109,6 +129,32 @@ def avg_heads(cam: torch.Tensor, grad: torch.Tensor) -> torch.Tensor:
 def apply_self_attention_rules(R_ss: torch.Tensor, cam_ss: torch.Tensor) -> torch.Tensor:
     R_ss_addition = torch.matmul(cam_ss, R_ss)
     return R_ss_addition
+
+
+def _postprocess_attribution(
+    transformer_attribution_pos: torch.Tensor, img_size: int
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Reshape patch attribution to spatial map, interpolate to image size, and normalize.
+
+    Used by compute_attribution for output formatting.
+
+    Returns:
+        (attribution_map_2d, raw_patch_map_1d): normalized interpolated map and raw patch vector.
+    """
+    raw_patch_map = transformer_attribution_pos.detach().cpu().numpy()
+
+    side_len = int(np.sqrt(transformer_attribution_pos.size(0)))
+    attribution_reshaped = transformer_attribution_pos.reshape(1, 1, side_len, side_len)
+    attribution_pos_np = F.interpolate(
+        attribution_reshaped, size=(img_size, img_size), mode='bilinear', align_corners=False
+    ).squeeze().cpu().numpy()
+
+    # Min-max normalize
+    val_range = np.max(attribution_pos_np) - np.min(attribution_pos_np)
+    if val_range > 1e-8:
+        attribution_pos_np = (attribution_pos_np - np.min(attribution_pos_np)) / (val_range + 1e-8)
+
+    return attribution_pos_np, raw_patch_map
 
 
 def run_model_forward_backward(
@@ -182,7 +228,11 @@ def setup_hooks(model_prisma: HookedViT, feature_gradient_layers: List[int]) -> 
     return fwd_hooks, bwd_hooks, gradients, activations, residuals
 
 
-def transmm_prisma_enhanced(
+# ---------------------------------------------------------------------------
+# Canonical public API
+# ---------------------------------------------------------------------------
+
+def compute_attribution(
     model_prisma: HookedViT,
     input_tensor: torch.Tensor,
     config: PipelineConfig,
@@ -194,9 +244,16 @@ def transmm_prisma_enhanced(
     feature_gradient_layers: Optional[List[int]] = None,
     clip_classifier: Optional[Any] = None,
     debug: bool = False,
-) -> Tuple[Dict[str, Any], np.ndarray, np.ndarray, Dict[int, Dict[str, Any]]]:
-    """
-    TransMM with feature gradient gating for improved faithfulness.
+) -> Dict[str, Any]:
+    """Orchestrator: full TransLRP attribution pipeline with optional feature-gradient gating.
+
+    This is the single canonical entrypoint for attribution computation.
+    Handles device resolution, input preparation, hook wiring, forward/backward,
+    layer-by-layer attribution (with optional gating), and post-processing.
+
+    Returns:
+        dict with keys: ``predictions``, ``attribution_positive``,
+        ``raw_attribution``, ``debug_info``.
     """
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -230,21 +287,63 @@ def transmm_prisma_enhanced(
         debug=debug
     )
 
-    # Convert to numpy and process attribution map
-    raw_patch_map = transformer_attribution_pos.detach().cpu().numpy()
+    # Post-process: reshape to spatial map, interpolate, normalize
+    attribution_pos_np, raw_patch_map = _postprocess_attribution(transformer_attribution_pos, img_size)
 
-    # Reshape and interpolate to image size
-    side_len = int(np.sqrt(transformer_attribution_pos.size(0)))
-    attribution_reshaped = transformer_attribution_pos.reshape(1, 1, side_len, side_len)
-    attribution_pos_np = F.interpolate(
-        attribution_reshaped, size=(img_size, img_size), mode='bilinear', align_corners=False
-    ).squeeze().cpu().numpy()
+    return {
+        "predictions": prediction_result,
+        "attribution_positive": attribution_pos_np,
+        "raw_attribution": raw_patch_map,
+        "debug_info": debug_info_per_layer if debug else {},
+    }
 
-    # Normalize
-    normalize_fn = lambda x: (x - np.min(x)) / (np.max(x) - np.min(x) + 1e-8) if (np.max(x) - np.min(x)) > 1e-8 else x
-    attribution_pos_np = normalize_fn(attribution_pos_np)
 
-    return (prediction_result, attribution_pos_np, raw_patch_map, debug_info_per_layer)
+# ---------------------------------------------------------------------------
+# Deprecated legacy entrypoints — delegate to compute_attribution
+# ---------------------------------------------------------------------------
+
+def transmm_prisma_enhanced(
+    model_prisma: HookedViT,
+    input_tensor: torch.Tensor,
+    config: PipelineConfig,
+    idx_to_class: Dict[int, str],
+    device: Optional[torch.device] = None,
+    img_size: int = 224,
+    steering_resources: Optional[Dict[int, Dict[str, Any]]] = None,
+    enable_feature_gradients: bool = True,
+    feature_gradient_layers: Optional[List[int]] = None,
+    clip_classifier: Optional[Any] = None,
+    debug: bool = False,
+) -> Tuple[Dict[str, Any], np.ndarray, np.ndarray, Dict[int, Dict[str, Any]]]:
+    """DEPRECATED — use ``compute_attribution`` instead.
+
+    Thin wrapper that delegates to compute_attribution and repacks the dict
+    output into the legacy 4-tuple format. Scheduled for removal in WP-07.
+    """
+    warnings.warn(
+        "transmm_prisma_enhanced is deprecated, use compute_attribution instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    result = compute_attribution(
+        model_prisma=model_prisma,
+        input_tensor=input_tensor,
+        config=config,
+        idx_to_class=idx_to_class,
+        device=device,
+        img_size=img_size,
+        steering_resources=steering_resources,
+        enable_feature_gradients=enable_feature_gradients,
+        feature_gradient_layers=feature_gradient_layers,
+        clip_classifier=clip_classifier,
+        debug=debug,
+    )
+    return (
+        result["predictions"],
+        result["attribution_positive"],
+        result["raw_attribution"],
+        result["debug_info"],
+    )
 
 
 def generate_attribution_prisma_enhanced(
@@ -258,32 +357,26 @@ def generate_attribution_prisma_enhanced(
     feature_gradient_layers: Optional[List[int]] = None,
     clip_classifier: Optional[Any] = None,
 ) -> Dict[str, Any]:
-    """
-    Generate attribution with feature gradient gating for improved faithfulness.
-    """
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    """DEPRECATED — use ``compute_attribution`` instead.
 
-    input_tensor = input_tensor.to(device)
-
-    # Get debug flag from config
+    Thin wrapper that reads debug_mode from config and delegates to
+    compute_attribution. Scheduled for removal in WP-07.
+    """
+    warnings.warn(
+        "generate_attribution_prisma_enhanced is deprecated, use compute_attribution instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     debug = getattr(config.classify.boosting, 'debug_mode', False)
-
-    (pred_dict, pos_attr_np, raw_patch_map, debug_info_per_layer) = transmm_prisma_enhanced(
+    return compute_attribution(
         model_prisma=model,
         input_tensor=input_tensor,
-        steering_resources=steering_resources,
         config=config,
+        idx_to_class=idx_to_class,
+        device=device,
+        steering_resources=steering_resources,
         enable_feature_gradients=enable_feature_gradients,
         feature_gradient_layers=feature_gradient_layers,
-        idx_to_class=idx_to_class,
         clip_classifier=clip_classifier,
         debug=debug,
     )
-
-    return {
-        "predictions": pred_dict,
-        "attribution_positive": pos_attr_np,
-        "raw_attribution": raw_patch_map,
-        "debug_info": debug_info_per_layer if debug else {},
-    }

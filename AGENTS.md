@@ -174,14 +174,14 @@ This tracker is a required, evolving log for project state and near-term executi
 
 - Program branch: `feature/team-research-restructure-plan`
 - Branching mode: `slice branches + immediate integration + accepted checkpoint tags`
-- Last successful commit reflected here: `WP-06 validation harness + setup guardrails slice on branch wp/WP-06-clarity-cleanup (pending review and integration checkpoint tracking)`
-- Last accepted integration checkpoint: `not yet recorded for WP-06A in this tracker`
-- What happened most recently: `Added validation stack for fresh environments plus setup hardening: smoke tests (`tests/test_smoke_contracts.py`, `tests/test_sweep_reproducibility.py`), opt-in heavy integration tests (`tests/test_integration_fresh_env.py`), git workflow audit script (`scripts/validation/git_workflow_audit.py`), runbook (`docs/validation/fresh_environment_validation.md`), and download guardrails in `src/gradcamfaith/data/download.py` (safe tar extraction fallback + HyperKvasir idempotent dataset skip).`
-- Reviewer decision: `pending review`
-- What should happen next: `run Tier-1 validation in every fresh checkout; run Tier-2 full-stack validation on credentialed CUDA hosts; then integrate accepted validation slice into feature/team-research-restructure-plan with accepted checkpoint tag.`
-- Immediate next task (concrete): `execute docs/validation/fresh_environment_validation.md commands (Tier-1 immediately, Tier-2 when credentials/GPU available), attach evidence artifacts, then proceed to WP-06B from integration HEAD.`
-- Immediate validation for that task: `git workflow audit passes, smoke pytest passes, dry-run manifest written, seed reproducibility check passes for sweep orchestration, and full-stack asset setup check passes after setup hardening.`
-- Known blockers/risks now: `integration branch/tag state is not yet visible in this environment (audit currently flags missing feature/team-research-restructure-plan and accepted/* tags).`
+- Last successful commit reflected here: `WP-06B-R3 accepted and integrated into feature/team-research-restructure-plan`
+- Last accepted integration checkpoint: `accepted/wp-06b`
+- What happened most recently: `WP-06B-R3 accepted: compute_attribution is canonical orchestrator, pipeline.py migrated, legacy entrypoints deprecated, boundary contract tests added. Cherry-picked into integration branch and tagged accepted/wp-06b.`
+- Reviewer decision: `accepted`
+- What should happen next: `create wp/WP-06C-gating-boundary-refactor from integration HEAD and execute gating refactor.`
+- Immediate next task (concrete): `WP-06C: split compute_feature_gradient_gate into focused internal helpers (score construction, gate mapping, debug packaging) in core/gating.py. Preserve public signatures.`
+- Immediate validation for that task: `public signature checks unchanged, import smokes pass, fixed-seed synthetic equivalence max_diff == 0.0 for gate outputs.`
+- Known blockers/risks now: `none`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
 
 ### Decision Log
@@ -222,6 +222,8 @@ This tracker is a required, evolving log for project state and near-term executi
 - **Validation follow-up (idempotent downloads)**: `download_hyperkvasir` now skips 3.7GB dataset re-download when `data/hyperkvasir/labeled-images` is already present and non-empty; model checkpoint download behavior is unchanged.
 - **Validation follow-up (tests)**: Added `tests/test_download_guardrails.py` to assert tar extraction fallback behavior and HyperKvasir dataset skip behavior.
 - **Validation follow-up (git hygiene)**: Added root `.gitignore` entries for `/models` and `/logs` so full-stack setup/test runs do not leave untracked runtime artifacts that block clean-worktree handoff checks.
+- **WP-06B v1 (attribution boundary refactor)**: Extracted `_postprocess_attribution` helper, removed unused `device` param from `apply_gradient_gating_to_cam`, added role docstrings. Review decision: rework requested — naming clarity insufficient.
+- **WP-06B-R3 (clean attribution API)**: `compute_attribution` is now the single canonical orchestrator returning `{predictions, attribution_positive, raw_attribution, debug_info}`. `pipeline.py` migrated to `compute_attribution` (no longer imports legacy names). `transmm_prisma_enhanced` and `generate_attribution_prisma_enhanced` converted to thin deprecated shims with `DeprecationWarning` and explicit removal plan (WP-07). `transmm.py` root wrapper re-exports `compute_attribution`. Added `tests/test_attribution_boundary_contracts.py` (4 tests). ARG001 findings: 2 (only download.py). Gate equivalence: max_diff == 0.0.
 
 ## Tooling and Commands
 Preferred command style:
@@ -498,9 +500,13 @@ All workpackages below are designed for coder ownership and maintainer review.
     - ARG001 findings reduced from 5 to 3
   - **WP-06B (attribution boundary refactor)**:
     - separate orchestration, attribution post-processing, and output-packing responsibilities in `core/attribution.py`
-    - keep both public entrypoints (`transmm_prisma_enhanced`, `generate_attribution_prisma_enhanced`) import-stable
+    - use `compute_attribution` as the single orchestrator (maintainer decision, WP-06B-R3)
+    - clean API rewrite allowed: legacy `transmm_prisma_enhanced` / `generate_attribution_prisma_enhanced` do not need signature stability
+    - migrate all in-repo call sites to `compute_attribution`
+    - optional temporary wrappers are allowed only as deprecated shims with explicit removal plan
     - make wrapper/adapter role explicit so overlap is intentional and documented, not accidental
     - remove unused `device` parameter from internal `apply_gradient_gating_to_cam`
+    - implementation contract is documented in `docs/refactor/wp06b_attribution_boundary_spec.md`
   - **WP-06C (gating boundary refactor)**:
     - split `compute_feature_gradient_gate` and `apply_feature_gradient_gating` into focused internal helpers (score construction, gate mapping, CAM application, debug packaging)
     - preserve public signatures unless explicitly approved
@@ -522,6 +528,7 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Acceptance checks (global for WP-06):
   - `uvx ruff check src/gradcamfaith/core src/gradcamfaith/experiments src/gradcamfaith/data --select ARG001,ARG002`
   - public entrypoint signatures unchanged unless explicitly approved and documented
+  - explicit approved exception: WP-06B-R3 clean attribution API rewrite per `docs/refactor/wp06b_attribution_boundary_spec.md`
   - import/path smokes for root and package entrypoints still pass
   - for slices touching `core/attribution.py` or `core/gating.py`, provide pre/post equivalence evidence on fixed-seed synthetic inputs (max absolute diff reported)
 - Deliverables: significantly improved readability in core + experiments, explicit responsibility documentation, and preserved runtime semantics.
@@ -544,9 +551,9 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Review WP-06A audit artifact and kappa/clamp_max follow-up on branch `wp/WP-06-clarity-cleanup` and record reviewer decision.
-2. Integrate accepted WP-06A commit(s) into `feature/team-research-restructure-plan` and tag checkpoint `accepted/wp-06a`.
-3. Create branch `wp/WP-06B-attribution-boundary-refactor` from integration HEAD and execute one-slice/one-commit flow with equivalence evidence.
+1. Review WP-06B-R3 on `wp/WP-06B-attribution-boundary-refactor` and record reviewer decision.
+2. After maintainer acceptance, integrate WP-06B-R3 commit(s) into `feature/team-research-restructure-plan`, tag `accepted/wp-06b`.
+3. Create branch `wp/WP-06C-gating-boundary-refactor` from integration HEAD and execute one-slice/one-commit flow with equivalence evidence.
 
 ## Done Criteria for This Rework
 - Core method code is isolated from experiment orchestration.
