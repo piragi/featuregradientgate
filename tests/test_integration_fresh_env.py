@@ -147,8 +147,8 @@ def test_imagenet_golden_faithfulness_values(tmp_path):
 
         RTOL = 5e-3  # 0.5% — covers CUDA float non-determinism
 
-        assert saco["mean"] == pytest.approx(0.26331857538045383, rel=RTOL)
-        assert saco["std"] == pytest.approx(0.4043539904807494, rel=RTOL)
+        assert saco["mean"] == pytest.approx(0.32168577032426415, rel=RTOL)
+        assert saco["std"] == pytest.approx(0.4138, rel=RTOL)
 
         # Faithfulness metrics (from faithfulness_stats*.json under val/)
         faith_files = list((gated_dir / "val").glob("faithfulness_stats_*.json"))

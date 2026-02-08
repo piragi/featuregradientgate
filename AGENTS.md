@@ -180,13 +180,13 @@ This tracker is a required, evolving log for project state and near-term executi
 - WP-09 status: `done and accepted`
 - WP-10 status: `done and accepted`
 - WP-11 status: `done and accepted`
-- WP-12 status: `planned — SaCo simplification. Clarify core algorithm, unify perturbation with shared infra, remove dead fields, separate reporting from computation. See WP-12 Concrete Plan.`
-- What happened most recently: `WP-11 integrated and tagged accepted/wp-11. Reviewed saco.py (429L) for further simplification. Core SaCo algorithm is obscured by dense matrix math, PIL perturbation round-trip, unused fields (bin_bias, class_changed, probabilities), and reporting code mixed into computation.`
-- Reviewer decision: `WP-11 accepted. WP-12 plan approved for execution.`
-- What should happen next: `execute WP-12 (SaCo simplification).`
-- Immediate next task (concrete): `WP-12: simplify calculate_saco_vectorized, switch perturbation to shared apply_baseline_perturbation, remove dead fields, separate reporting from core algorithm. Target: ~250L.`
-- Immediate validation for that task: `all tests pass. SaCo scores may differ slightly due to perturbation path change (tensor-level mean vs PIL-level mean), but metric semantics are preserved.`
-- Known blockers/risks now: `perturbation path change (PIL→tensor) will cause minor numerical differences in SaCo scores. Acceptable per maintainer decision.`
+- WP-12 status: `done — SaCo simplification + perturbation bugfix. saco.py 429→324L. Fixed spatial misalignment in perturbation (PIL round-trip applied mask at wrong resolution), rewrote calculate_saco as clear pairwise loop, removed dead fields, simplified inference and reporting. Golden SaCo values updated (gated mean: 0.2633→0.3217).`
+- What happened most recently: `WP-12 executed. During implementation, discovered and fixed two bugs in SaCo: (1) old PIL perturbation had spatial misalignment — mask designed for 224x224 was resized to original image resolution, perturbed there, then resize+crop distorted patch boundaries (489 unmasked pixels changed, non-uniform fill with std=0.18 per channel). Fixed by perturbing directly on cached tensor in model input space. (2) calculate_saco rewrite initially had wrong formula (used abs(attr_diff) instead of signed attr_diff, and missed descending sort requirement). Both fixed and verified with 10k-trial equivalence tests. Golden test values updated.`
+- Reviewer decision: `pending WP-12 review.`
+- What should happen next: `integrate WP-12, tag accepted/wp-12.`
+- Immediate next task (concrete): `push WP-12 branch, integrate into feature/team-research-restructure-plan, tag accepted/wp-12.`
+- Immediate validation for that task: `all 14+3 tests pass on integration branch (including full-stack golden value test).`
+- Known blockers/risks now: `none`
 - Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ in a future WP.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
 
@@ -651,6 +651,7 @@ Current reporting block (lines 348-391) mixes post-hoc analysis, summary printin
 - **WP-09 (cleanup and consolidation)**: Removed 14 dead re-exports from `data/setup.py` — kept only imports actually used by `main()` plus `convert_dataset` (used by `pipeline.py`). Promoted conditional `get_dataset_config` imports to top-level in `experiments/saco.py` and removed redundant inline import in `experiments/faithfulness.py`. Updated `pip install` hint to `uv add` in `data/setup.py`. All 14 tests pass.
 - **WP-10 (pipeline breakup)**: Decomposed root `pipeline.py` (436 lines) into focused package modules. Created `experiments/pipeline.py` (orchestrator: `run_unified_pipeline`), `experiments/classify.py` (per-image: `save_attribution_bundle_to_files`, `classify_explain_single_image`). Added `extract_saco_summary` to `experiments/saco.py` (extracted from inline SaCo result extraction). Moved `prepare_dataset_if_needed` to `data/setup.py`. Deleted dead code: `classify_single_image` (never called), line 271 dead expression (ternary result never assigned), re-exports of `load_model_for_dataset`/`load_steering_resources` (callers now import directly). Replaced `models/__init__.py` lazy `__getattr__` with clean eager re-exports — resolves circular dependency `pipeline → models.load → models/__init__ → pipeline`. Updated 4 consumer import sites: `experiments/sweep.py`, `experiments/sae_train.py`, `experiments/case_studies.py`, `tests/test_smoke_contracts.py`. Updated `test_attribution_boundary_contracts.py` to check `experiments/classify.py` instead of root `pipeline`. Root `pipeline.py` deleted. Zero root `.py` files remain. All 14 tests pass. Known future cleanup: debug accumulation block (~90 lines) in `experiments/pipeline.py` — extract into helper when debug mode evolves.
 - **WP-11 (faithfulness metric decomposition)**: Split `faithfulness.py` (929L) into 3 files: `faithfulness.py` (401L, shared perturbation infra + orchestration + reporting), `pixel_flipping.py` (90L, `PatchPixelFlipping` class), `faithfulness_correlation.py` (112L, `FaithfulnessCorrelation` class). Compressed `saco.py` (780→429L): removed 3 dataclasses (`ImageData`, `BinnedPerturbationData`, `BinImpactResult`), replaced with tuple returns; deduplicated `create_spatial_mask_for_bin` by importing shared `create_patch_mask` from faithfulness.py; inlined single-use functions (`analyze_key_attribution_patterns`, `run_binned_saco_analysis`); made `_analyze_faithfulness_vs_correctness` private. Shared perturbation infra: `create_patch_mask` (returns numpy H,W mask), `apply_baseline_perturbation` (handles broadcasting), `predict_on_batch`, `normalize_patch_attribution`. Factory functions absorbed into class `__init__`. Total LOC: 1709→1032 (40% reduction). All 14 tests pass.
+- **WP-12 (SaCo simplification + perturbation bugfix)**: Simplified `saco.py` (429→324L). **Bugfix: spatial misalignment in SaCo perturbation** — old `apply_binned_perturbation` applied the 224x224 patch mask at the original PIL image resolution (e.g., 500x375), then resize+center-crop back to 224x224 distorted patch boundaries. Diagnostic confirmed: 489 unmasked pixels changed (max diff 0.44), masked fill non-uniform (std=0.18/channel from resize interpolation blending). Fixed by perturbing directly on the cached (C,224,224) tensor using shared `apply_baseline_perturbation` — exact patch grid alignment, uniform fill, no PIL round-trip. Golden SaCo values updated (gated mean: 0.2633→0.3217, std: 0.4044→0.4138). Rewrote `calculate_saco_vectorized_with_bias` → `calculate_saco`: clear pairwise loop using signed `attr_diff` weights with descending sort (required for correct sign). Removed bias computation (never used). Replaced `batched_model_inference` → `_classify_batch`: returns numpy arrays instead of dicts. Replaced `measure_bin_impacts` + `compute_saco_from_impacts` → `_measure_bin_drops`. Removed 5 dead fields, deleted attribution patterns block, removed double-save, renamed `_analyze_faithfulness_vs_correctness` → `_join_saco_with_correctness`. All tests pass including full-stack golden value test.
 
 ## Tooling and Commands
 Preferred command style:
@@ -991,10 +992,8 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Create branch `wp/WP-12-saco-simplification` from integration HEAD.
-2. Execute WP-12: simplify SaCo core algorithm, unify perturbation, remove dead fields, clean up reporting.
-3. Verify all tests pass. Integrate, tag `accepted/wp-12`.
-4. Assess next priorities with maintainer:
+1. Integrate WP-12, tag `accepted/wp-12`.
+2. Assess next priorities with maintainer:
    - Sweep compression (resource lifecycle extraction to `models/`, deferred from WP-06D).
    - `case_studies.py` and `comparison.py` compression.
    - Debug accumulation cleanup in `experiments/pipeline.py` (~90 lines).
