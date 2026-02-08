@@ -40,8 +40,13 @@ For concurrent paper release:
 ## Branching For Team Execution
 - Team integration branch for this program: `feature/team-research-restructure-plan`.
 - All coders branch from `feature/team-research-restructure-plan`, not from `main`.
-- Workpackage branch naming: `wp/<WP-ID>-<short-slug>` (example: `wp/WP-01-core-package-bootstrap`).
-- Merge policy: all workpackage branches merge back into `feature/team-research-restructure-plan` only after review.
+- Branches are slice-scoped, not long-lived per whole workpackage.
+- Single-slice workpackage branch naming: `wp/<WP-ID>-<short-slug>` (example: `wp/WP-03-data-setup-split`).
+- Slice branch naming: `wp/<WP-ID><slice>-<short-slug>` (examples: `wp/WP-06A-core-audit-contract`, `wp/WP-06B-attribution-boundary-refactor`).
+- Start each new slice branch from the latest `feature/team-research-restructure-plan` HEAD.
+- Merge policy: after review, merge or cherry-pick accepted slice commit(s) into `feature/team-research-restructure-plan` immediately.
+- Tag every accepted integration checkpoint on integration branch (example: `accepted/wp-06a`).
+- Next slice always branches from the new integration HEAD after the accepted checkpoint is in.
 - Promotion to `main` happens later as a separate integration decision after workpackage validation.
 
 ## Current Repo Snapshot (as of this plan)
@@ -129,9 +134,9 @@ During migration:
 ## Workflow Policy (Mandatory)
 Use a feature branch for the rework.
 
-Per task:
+Per execution slice:
 1. Implement one scoped task.
-2. Make exactly one commit for that task.
+2. Make exactly one commit for that slice.
 3. Provide a concise change summary for review.
 4. Stop and wait for feedback.
 
@@ -142,6 +147,9 @@ After feedback:
 4. Wait again for feedback.
 
 After each accepted change:
+- Integrate that accepted slice into `feature/team-research-restructure-plan` immediately.
+- Create/update accepted checkpoint tag on integration branch (`accepted/<wp-slice>`).
+- Start the next slice branch from the updated integration HEAD.
 - Update `AGENTS.md` with any noteworthy decisions, deviations, or new constraints.
 - Reevaluate this plan and define the next concrete step.
 - Update the `Feature Tracker (Living)` section with what happened and what is next.
@@ -165,11 +173,13 @@ Always record in `AGENTS.md`:
 This tracker is a required, evolving log for project state and near-term execution. Update it after every successful commit.
 
 - Program branch: `feature/team-research-restructure-plan`
-- Last successful commit reflected here: `WP-06A on branch wp/WP-06-clarity-cleanup`
+- Branching mode: `slice branches + immediate integration + accepted checkpoint tags`
+- Last successful commit reflected here: `WP-06A on branch wp/WP-06-clarity-cleanup (pending integration checkpoint tag)`
+- Last accepted integration checkpoint: `not yet recorded for WP-06A in this tracker`
 - What happened most recently: `WP-06A completed — produced core responsibility map (docs/refactor/wp06_core_responsibility_map.md) with function inventory, overlap analysis, unused parameter ledger, slice plan (WP-06B-E), and equivalence contract with baseline signatures/lint. Fixed circular import in models/__init__.py (lazy re-export).`
 - Reviewer decision: `pending review`
-- What should happen next: `review WP-06A audit artifact, then proceed with WP-06B (attribution boundary refactor)`
-- Immediate next task (concrete): `WP-06B: annotate adapter/core roles, extract _postprocess_attribution, remove unused device param from apply_gradient_gating_to_cam`
+- What should happen next: `record WP-06A accepted integration checkpoint, then proceed with WP-06B (attribution boundary refactor) from integration HEAD`
+- Immediate next task (concrete): `integrate accepted WP-06A commit(s) into feature/team-research-restructure-plan, tag checkpoint (example: accepted/wp-06a), then open wp/WP-06B-attribution-boundary-refactor`
 - Immediate validation for that task: `public signature check unchanged, import smokes pass, numeric equivalence max_diff == 0.0 on synthetic gate tensor`
 - Known blockers/risks now: `none — kappa/clamp_max resolved in WP-06A follow-up (kappa removed from gate chain, clamp_max wired into formula with default 10.0)`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
@@ -203,6 +213,7 @@ This tracker is a required, evolving log for project state and near-term executi
 - **WP-06A**: Fixed circular import in `src/gradcamfaith/models/__init__.py` — eager `from pipeline import run_unified_pipeline` caused circular dependency when import chain passed through `pipeline.py` -> `gradcamfaith.models.load` -> `models/__init__` -> `pipeline`. Converted to lazy `__getattr__` re-export.
 - **WP-06A**: Key finding: `kappa` and `clamp_max` parameters are plumbed through the full config path but have zero effect on output. Active gate formula is `10 ** tanh(s_norm)` (hardcoded); the parameterized formula `clamp_max ** tanh(kappa * s_norm)` is commented out. This is the highest-priority clarity issue.
 - **WP-06A follow-up**: Maintainer decision on kappa/clamp_max: (1) `kappa` removed from `compute_feature_gradient_gate` signature and full config-to-gate chain; retained in `PipelineConfig` as sweep metadata only. (2) `clamp_max` wired into active gate formula: `clamp_max ** tanh(s_norm)` with default 10.0 (matching previous hardcoded value). Numeric equivalence verified: max_diff == 0.0. ARG001 findings reduced from 5 to 3. `kappa` removed from `ExampleConfig` in `minimal_run.py`.
+- **Process update**: Delivery model switched from long-lived workpackage branches to slice-scoped branches with immediate integration into `feature/team-research-restructure-plan` and accepted checkpoint tags (`accepted/wp-06a`, `accepted/wp-06b`, ...).
 
 ## Tooling and Commands
 Preferred command style:
@@ -516,9 +527,9 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Review WP-06A audit artifact and kappa/clamp_max follow-up on branch `wp/WP-06-clarity-cleanup`, then assign WP-06B (attribution boundary refactor).
-2. Require one commit per slice with equivalence evidence in the commit summary.
-3. Review against `Workpackage Review Checklist`, then update `Feature Tracker (Living)` with accepted result and next slice assignment.
+1. Review WP-06A audit artifact and kappa/clamp_max follow-up on branch `wp/WP-06-clarity-cleanup` and record reviewer decision.
+2. Integrate accepted WP-06A commit(s) into `feature/team-research-restructure-plan` and tag checkpoint `accepted/wp-06a`.
+3. Create branch `wp/WP-06B-attribution-boundary-refactor` from integration HEAD and execute one-slice/one-commit flow with equivalence evidence.
 
 ## Done Criteria for This Rework
 - Core method code is isolated from experiment orchestration.
