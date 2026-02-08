@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 
 import gradcamfaith.core.config as config
-from dataset_config import get_dataset_config
+from gradcamfaith.data.dataset_config import get_dataset_config
 from pipeline import (load_model_for_dataset, load_steering_resources, run_unified_pipeline)
 
 

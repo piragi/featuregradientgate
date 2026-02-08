@@ -1,2 +1,5 @@
-# Re-export dataset_config until it is fully migrated into this subpackage
-from dataset_config import get_dataset_config  # noqa: F401
+# dataset_config is now fully migrated into this subpackage
+from gradcamfaith.data.dataset_config import (  # noqa: F401
+    DatasetConfig,
+    get_dataset_config,
+)

@@ -15,7 +15,7 @@ from PIL import Image
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
-from dataset_config import COVIDQUEX_CONFIG, HYPERKVASIR_CONFIG, DatasetConfig
+from gradcamfaith.data.dataset_config import COVIDQUEX_CONFIG, HYPERKVASIR_CONFIG, DatasetConfig
 
 
 def _create_output_structure(output_path: Path, num_classes: int) -> None:
@@ -192,7 +192,7 @@ def prepare_waterbirds(source_path: Path, output_path: Path, config: Optional['D
     output_path, source_path = Path(output_path), Path(source_path)
 
     if config is None:
-        from dataset_config import WATERBIRDS_CONFIG
+        from gradcamfaith.data.dataset_config import WATERBIRDS_CONFIG
         config = WATERBIRDS_CONFIG
 
     _create_output_structure(output_path, config.num_classes)
@@ -254,7 +254,7 @@ def prepare_imagenet(source_path: Path, output_path: Path, config: Optional['Dat
     output_path, source_path = Path(output_path), Path(source_path)
 
     if config is None:
-        from dataset_config import get_imagenet_config
+        from gradcamfaith.data.dataset_config import get_imagenet_config
         config = get_imagenet_config()
 
     # Optional guard (nice safety net)
