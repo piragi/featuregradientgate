@@ -92,9 +92,9 @@ class BoostingConfig:
     # Feature gradient gating
     enable_feature_gradients: bool = False  # Enable feature gradient gating
     feature_gradient_layers: List[int] = field(default_factory=lambda: [9, 10])  # Which layers to apply
-    kappa: float = 10.0  # Scaling factor for exponential gate mapping
+    kappa: float = 10.0  # Sweep metadata only — not used in gate formula (kept for experiment naming)
     clamp_min: float = 0.1  # Minimum gate value (1/clamp_max)
-    clamp_max: float = 10.0  # Maximum gate value (range: [clamp_min, clamp_max])
+    clamp_max: float = 10.0  # Base for exponential gate mapping: gate = clamp_max^(tanh(s_norm))
     gate_construction: str = "combined"  # Type of gate: "activation_only", "gradient_only", or "combined"
     shuffle_decoder: bool = False  # Shuffle decoder columns to break semantic alignment
     shuffle_decoder_seed: int = 12345  # Random seed for decoder shuffling (reproducibility)

@@ -32,7 +32,6 @@ class ExampleConfig:
 
     # Feature gradient gating
     layers: List[int] = field(default_factory=lambda: [6, 9, 10])
-    kappa: float = 0.5
     gate_construction: str = "combined"
 
     # Run settings
@@ -158,7 +157,7 @@ def run_example(config: ExampleConfig) -> Dict[str, Any]:
     print(f"  SaCo mean: {vanilla_saco.get('mean', 'N/A')}")
 
     # --- Feature-gradient gated ---
-    print(f"\n--- Feature-Gradient Gated (kappa={config.kappa}, layers={config.layers}) ---")
+    print(f"\n--- Feature-Gradient Gated (layers={config.layers}) ---")
     pipeline_config_gated = PipelineConfig()
     pipeline_config_gated.file.set_dataset(config.dataset_name)
     pipeline_config_gated.file.current_mode = config.current_mode
@@ -166,7 +165,6 @@ def run_example(config: ExampleConfig) -> Dict[str, Any]:
     pipeline_config_gated.classify.analysis = True
     pipeline_config_gated.classify.boosting.enable_feature_gradients = True
     pipeline_config_gated.classify.boosting.feature_gradient_layers = config.layers
-    pipeline_config_gated.classify.boosting.kappa = config.kappa
     pipeline_config_gated.classify.boosting.gate_construction = config.gate_construction
 
     gated_results, gated_saco = run_unified_pipeline(
@@ -191,7 +189,6 @@ def run_example(config: ExampleConfig) -> Dict[str, Any]:
     print(f"Dataset:       {config.dataset_name}")
     print(f"Subset size:   {config.subset_size}")
     print(f"Layers:        {config.layers}")
-    print(f"Kappa:         {config.kappa}")
     v_mean = vanilla_saco.get("mean", 0)
     g_mean = gated_saco.get("mean", 0)
     print(f"SaCo vanilla:  {v_mean:.4f}")

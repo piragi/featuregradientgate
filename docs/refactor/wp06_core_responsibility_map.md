@@ -102,11 +102,11 @@ Extract debug collection from `compute_feature_gradient_gate` into a private hel
 | File:Function | Parameter | State | Proposed Action | Rationale |
 |---|---|---|---|---|
 | `core/attribution.py:apply_gradient_gating_to_cam` | `device` | `unused` | `remove_internal` | Function never references it. Device is obtained from `cam_pos_avg.device` downstream. `apply_gradient_gating_to_cam` is internal (only called by `compute_layer_attribution`), so removing the parameter has no external API impact. Caller already has `device` available and doesn't need to pass it. |
-| `core/gating.py:compute_feature_gradient_gate` | `kappa` | `unused` | `retain_reserved_with_comment` | The active gate formula is `10 ** tanh(s_norm)` (L96). The `kappa`-parameterized formula `clamp_max ** tanh(kappa * s_norm)` is commented out (L91-95). This is a research parameter that was part of an earlier ablation and may be restored. Retain with explicit `# RESERVED: currently unused — active formula on L96 ignores this` comment. Requires maintainer decision on whether to remove or wire back in. |
-| `core/gating.py:compute_feature_gradient_gate` | `clamp_max` | `unused` | `retain_reserved_with_comment` | Same situation as `kappa`. Part of the commented-out parameterized gate formula. Retain with reservation comment. |
+| `core/gating.py:compute_feature_gradient_gate` | `kappa` | **RESOLVED: removed** | removed per maintainer decision | Removed from `compute_feature_gradient_gate` signature and full config chain. Retained in `PipelineConfig` as sweep metadata only (used for experiment naming in sweep.py/comparison.py). |
+| `core/gating.py:compute_feature_gradient_gate` | `clamp_max` | **RESOLVED: wired in** | wired into active formula per maintainer decision | Formula changed from hardcoded `10 ** tanh(s_norm)` to `clamp_max ** tanh(s_norm)` with default 10.0. Numeric equivalence verified: max_diff == 0.0 with default value. |
 | `core/gating.py:compute_feature_gradient_gate` | `residual` | `conditionally_used` | no action needed | Only used when `gate_construction == "no_SAE"` (L77-80). This is correct behavior — `no_SAE` mode uses raw `residual * residual_grad` instead of SAE-decomposed contributions. |
 
-**High-priority observation**: `kappa` and `clamp_max` are plumbed through the full config path (`PipelineConfig` -> `apply_gradient_gating_to_cam` -> `apply_feature_gradient_gating` -> `compute_feature_gradient_gate`) but have **zero effect on output**. A researcher changing `kappa` in `PipelineConfig` sees no behavioral change. This is the highest-priority clarity issue in the scoped files.
+**Resolved**: Maintainer decided to remove `kappa` (not used in formula) and wire `clamp_max` into the active gate formula with default 10. ARG001 findings reduced from 5 to 3.
 
 ## Refactor Slice Plan (No Logic Change)
 
@@ -191,11 +191,9 @@ Run:
 uvx ruff check src/gradcamfaith/core src/gradcamfaith/experiments src/gradcamfaith/data --select ARG001,ARG002
 ```
 
-Baseline result (WP-06A, 5 findings):
+Baseline result (WP-06A, 5 findings -> 3 after kappa/clamp_max fix):
 ```
 src/gradcamfaith/core/attribution.py:20:76  ARG001 Unused function argument: `device`
-src/gradcamfaith/core/gating.py:16:5        ARG001 Unused function argument: `kappa`
-src/gradcamfaith/core/gating.py:17:5        ARG001 Unused function argument: `clamp_max`
 src/gradcamfaith/data/download.py:39:59     ARG001 Unused function argument: `description`
 src/gradcamfaith/data/download.py:112:39    ARG001 Unused function argument: `models_dir`
 ```

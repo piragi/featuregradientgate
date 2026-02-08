@@ -13,8 +13,7 @@ def compute_feature_gradient_gate(
     residual: Optional[torch.Tensor],
     sae_codes: torch.Tensor,
     sae_decoder: torch.Tensor,
-    kappa: float = 3.0,
-    clamp_max: float = 5.0,
+    clamp_max: float = 10.0,
     gate_construction: str = "combined",
     shuffle_decoder: bool = False,
     shuffle_decoder_seed: int = 12345,
@@ -28,14 +27,13 @@ def compute_feature_gradient_gate(
     1. Project gradient to feature space: h = D^T g
     2. Weight by activation: s_k = h_k * f_k
     3. Sum all features: s = Σ_k s_k
-    4. Map to multiplier: w = exp(κ * normalize(s))
+    4. Map to multiplier: w = clamp_max^(tanh(normalize(s)))
 
     Args:
         residual_grad: Gradient w.r.t. residual [n_patches, d_model]
         sae_codes: SAE feature activations [n_patches, n_features]
         sae_decoder: SAE decoder matrix [d_model, n_features]
-        kappa: Scaling factor for exponential mapping
-        clamp_max: Maximum multiplier value (gate range: [1/clamp_max, clamp_max])
+        clamp_max: Base for exponential gate mapping (gate range: [1/clamp_max, clamp_max])
         gate_construction: Gate construction type: "activation_only", "gradient_only", or "combined"
         shuffle_decoder: Whether to shuffle decoder columns to break semantic alignment
         shuffle_decoder_seed: Random seed for decoder shuffling (for reproducibility)
@@ -82,18 +80,13 @@ def compute_feature_gradient_gate(
     else:
         raise ValueError(f"Unknown gate_construction type: {gate_construction}")
 
-    # Normalize across patches (z-score normalization)
+    # Normalize across patches (robust z-score via MAD)
     s_median = s_t.median()
     s_mad = (s_t - s_median).abs().median() + 1e-8
     s_norm = (s_t - s_median) / (1.4826 * s_mad)
-    # Symmetric exponential mapping: gate = clamp_max^(tanh(kappa * s_norm))
+    # Symmetric exponential mapping: gate = clamp_max^(tanh(s_norm))
     # Range: [1/clamp_max, clamp_max], centered at 1
-    # gate = torch.exp(
-    # torch.log(torch.tensor(clamp_max, device=s_norm.device, dtype=s_norm.dtype)) * torch.tanh(kappa * s_norm)
-    # )
-    # s_norm = (s_t - s_t.mean()) / (s_t.std() + 1e-8)
-    # s_norm = s_norm.clamp(-1, 1)
-    gate = 10 ** torch.tanh(s_norm)
+    gate = clamp_max ** torch.tanh(s_norm)
     gate = gate.detach()
 
 
@@ -174,8 +167,7 @@ def apply_feature_gradient_gating(
         config = {}
 
     # Get configuration parameters
-    kappa = config.get('kappa', 10.0)
-    clamp_max = config.get('clamp_max', 5.0)
+    clamp_max = config.get('clamp_max', 10.0)
     gate_construction = config.get('gate_construction', 'combined')
     shuffle_decoder = config.get('shuffle_decoder', False)
     shuffle_decoder_seed = config.get('shuffle_decoder_seed', 12345)
@@ -195,7 +187,6 @@ def apply_feature_gradient_gating(
         residual=residual,
         sae_codes=sae_codes,
         sae_decoder=decoder,
-        kappa=kappa,
         clamp_max=clamp_max,
         gate_construction=gate_construction,
         shuffle_decoder=shuffle_decoder,
