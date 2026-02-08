@@ -16,16 +16,15 @@ from tqdm import tqdm
 # Suppress PIL debug logging
 logging.getLogger('PIL').setLevel(logging.WARNING)
 
-import io_utils
+from gradcamfaith.data import io_utils
 from gradcamfaith.core.config import FileConfig, PipelineConfig
 from gradcamfaith.core.types import (AttributionDataBundle, AttributionOutputPaths, ClassificationPrediction, ClassificationResult)
-# New imports for unified system
-from dataset_config import DatasetConfig, get_dataset_config
-from faithfulness import evaluate_and_report_faithfulness
-from saco import run_binned_attribution_analysis
-from setup import convert_dataset
+from gradcamfaith.data.dataset_config import DatasetConfig, get_dataset_config
+from gradcamfaith.experiments.faithfulness import evaluate_and_report_faithfulness
+from gradcamfaith.experiments.saco import run_binned_attribution_analysis
+from gradcamfaith.data.setup import convert_dataset
 from gradcamfaith.core.attribution import compute_attribution
-from unified_dataloader import create_dataloader, get_single_image_loader
+from gradcamfaith.data.dataloader import create_dataloader, get_single_image_loader
 
 # Compatibility re-exports — canonical source is now in gradcamfaith.models.*
 from gradcamfaith.models.load import load_model_for_dataset  # noqa: F401
@@ -394,7 +393,7 @@ def run_unified_pipeline(
     # For CLIP models, wrap the classifier for both faithfulness and attribution analysis
     model_for_analysis = model
     if clip_classifier is not None:
-        from clip_classifier import CLIPModelWrapper
+        from gradcamfaith.models.clip_classifier import CLIPModelWrapper
         model_for_analysis = CLIPModelWrapper(clip_classifier)
         print("Using CLIP wrapper for analysis")
 

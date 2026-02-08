@@ -69,9 +69,9 @@ def _extract_sae_activations(
     Extracted and streamlined from extract_sae_activations.py.
     """
     import gradcamfaith.core.config as config
-    from dataset_config import get_dataset_config
+    from gradcamfaith.data.dataset_config import get_dataset_config
     from pipeline import load_model_for_dataset, load_steering_resources
-    from unified_dataloader import create_dataloader, get_single_image_loader
+    from gradcamfaith.data.dataloader import create_dataloader, get_single_image_loader
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
@@ -1105,7 +1105,7 @@ def run_case_study_analysis(
     use_validation_prototypes = validation_activations_path is not None
 
     # Load dataset config for preprocessing
-    from dataset_config import get_dataset_config
+    from gradcamfaith.data.dataset_config import get_dataset_config
     dataset_config = get_dataset_config(dataset)
 
     # Determine image directories

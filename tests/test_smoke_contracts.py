@@ -11,10 +11,10 @@ def _param_names(func):
 
 def test_package_api_imports():
     """All public APIs are importable from their canonical package paths."""
-    import setup  # noqa: F401
+    import gradcamfaith.data.setup  # noqa: F401
 
     from pipeline import load_model_for_dataset, load_steering_resources, run_unified_pipeline
-    from setup import convert_dataset
+    from gradcamfaith.data.setup import convert_dataset
 
     from gradcamfaith.experiments.case_studies import run_case_study_analysis
     from gradcamfaith.experiments.comparison import main as comparison_main
@@ -40,7 +40,7 @@ def test_public_signature_contracts():
     from gradcamfaith.experiments.sae_train import train_single_config
     from gradcamfaith.experiments.sweep import run_parameter_sweep, run_single_experiment
     from pipeline import load_model_for_dataset, load_steering_resources, run_unified_pipeline
-    from setup import convert_dataset
+    from gradcamfaith.data.setup import convert_dataset
 
     assert _param_names(run_single_experiment) == [
         "dataset_name",

@@ -42,7 +42,7 @@ def main():
         download_covidquex(data_dir, models_dir)
         download_imagenet(data_dir, models_dir)
 
-        from dataset_config import refresh_imagenet_config
+        from gradcamfaith.data.dataset_config import refresh_imagenet_config
         refresh_imagenet_config()
 
         download_thesis_saes(data_dir)

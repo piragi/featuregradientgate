@@ -11,7 +11,7 @@ from typing import Optional
 import torch
 
 from gradcamfaith.core.config import PipelineConfig
-from dataset_config import DatasetConfig
+from gradcamfaith.data.dataset_config import DatasetConfig
 
 
 def load_model_for_dataset(
@@ -48,7 +48,7 @@ def load_model_for_dataset(
         print(f"CLIP loaded as HookedViT")
 
         # Create CLIP classifier for this model
-        from clip_classifier import create_clip_classifier_for_waterbirds
+        from gradcamfaith.models.clip_classifier import create_clip_classifier_for_waterbirds
         print("Creating CLIP classifier...")
         clip_model_name = config.classify.clip_model_name if config else "openai/clip-vit-base-patch32"
         clip_classifier = create_clip_classifier_for_waterbirds(

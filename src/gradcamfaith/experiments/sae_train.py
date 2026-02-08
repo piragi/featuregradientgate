@@ -10,7 +10,7 @@ from vit_prisma.sae import VisionSAETrainer
 from vit_prisma.sae.config import VisionModelSAERunnerConfig
 
 import wandb
-from dataset_config import get_dataset_config
+from gradcamfaith.data.dataset_config import get_dataset_config
 from pipeline import load_model_for_dataset
 
 # Suppress PIL debug logging

@@ -29,7 +29,7 @@ def _normalize_results(base_dir: Path):
 def test_full_setup_downloads_assets():
     _skip_unless_full_stack()
 
-    from setup import main as setup_main
+    from gradcamfaith.data.setup import main as setup_main
 
     setup_main()
 
