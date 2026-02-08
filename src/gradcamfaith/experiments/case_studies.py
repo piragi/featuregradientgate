@@ -70,7 +70,8 @@ def _extract_sae_activations(
     """
     import gradcamfaith.core.config as config
     from gradcamfaith.data.dataset_config import get_dataset_config
-    from pipeline import load_model_for_dataset, load_steering_resources
+    from gradcamfaith.models.load import load_model_for_dataset
+    from gradcamfaith.models.sae_resources import load_steering_resources
     from gradcamfaith.data.dataloader import create_dataloader, get_single_image_loader
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

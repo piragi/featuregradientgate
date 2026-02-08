@@ -49,15 +49,16 @@ For concurrent paper release:
 - Next slice always branches from the new integration HEAD after the accepted checkpoint is in.
 - Promotion to `main` happens later as a separate integration decision after workpackage validation.
 
-## Current Repo Snapshot (post WP-09)
-- Only one root `.py` file remains: `pipeline.py` (WP-10 will decompose and delete it).
+## Current Repo Snapshot (post WP-10)
+- Zero root `.py` files remain. All code lives in the package.
 - Package code (`src/gradcamfaith/`) is the canonical source for all modules:
   - `core/` — attribution, gating, config, types
   - `data/` — dataset_config, dataloader, download, prepare, setup, io_utils
   - `models/` — load, sae_resources, clip_classifier
-  - `experiments/` — sweep, sae_train, comparison, case_studies, faithfulness, saco
+  - `experiments/` — pipeline, classify, sweep, sae_train, comparison, case_studies, faithfulness, saco
   - `examples/` — minimal_run
-- `models/__init__.py` still has lazy `__getattr__` for `run_unified_pipeline` from root `pipeline.py` — resolved in WP-10.
+- `models/__init__.py` uses clean eager re-exports of `load_model_for_dataset` and `load_steering_resources` (no `__getattr__` hack).
+- Dependency graph is unidirectional: `core → data → models → experiments` (no cycles).
 
 ## Target Structure
 Package layout under `src/gradcamfaith` with unidirectional dependency flow: `core → data → models → experiments`.
@@ -167,19 +168,20 @@ This tracker is a required, evolving log for project state and near-term executi
 
 - Program branch: `feature/team-research-restructure-plan`
 - Branching mode: `slice branches + immediate integration + accepted checkpoint tags`
-- Last successful commit reflected here: `WP-09 on wp/WP-09-cleanup-consolidation, pending integration`
-- Last accepted integration checkpoint: `accepted/wp-08`
+- Last successful commit reflected here: `WP-10 on wp/WP-10-pipeline-breakup, pending integration`
+- Last accepted integration checkpoint: `accepted/wp-09`
 - WP-06B status: `done and accepted`
 - WP-06C status: `done and accepted`
 - WP-06D status: `done and accepted`
 - WP-07 status: `done and accepted`
 - WP-08 status: `done and accepted — 7 root files migrated into package, ~25 import sites updated. Only pipeline.py remains at root.`
-- WP-09 status: `done, pending integration — dead re-exports removed from setup.py, conditional imports promoted to top-level, data/__init__.py cleaned. All 14 tests pass.`
-- What happened most recently: `WP-09: removed 14 dead re-exports from data/setup.py (keep only main() + used imports), promoted conditional dataset_config imports to top-level in saco.py and faithfulness.py, updated data/__init__.py, fixed pip→uv hint.`
+- WP-09 status: `done and accepted`
+- WP-10 status: `done, pending integration — pipeline.py decomposed into experiments/pipeline.py + experiments/classify.py, prepare_dataset_if_needed moved to data/setup.py, extract_saco_summary added to saco.py, dead code removed (classify_single_image, line 271 dead expression, re-exports), models/__init__.py circular dependency resolved, root pipeline.py deleted. Zero root .py files. All 14 tests pass.`
+- What happened most recently: `WP-10: decomposed root pipeline.py (436 lines) into experiments/pipeline.py (orchestrator), experiments/classify.py (per-image classify+explain), added extract_saco_summary to saco.py, moved prepare_dataset_if_needed to data/setup.py. Deleted dead code (classify_single_image, line 271 dead expression, re-exports). Replaced models/__init__.py __getattr__ with clean eager re-exports. Updated 4 consumer import sites (sweep.py, sae_train.py, case_studies.py, test_smoke_contracts.py). Updated test_attribution_boundary_contracts.py to check experiments/classify.py instead of root pipeline.`
 - Reviewer decision: `pending`
-- What should happen next: `integrate WP-09, then execute WP-10 (pipeline decomposition).`
-- Immediate next task (concrete): `WP-10: decompose pipeline.py into experiments/pipeline.py + experiments/classify.py, move prepare_dataset_if_needed to data/setup.py, resolve models/__init__.py circular dependency, delete root pipeline.py.`
-- Immediate validation for that task: `all tests pass. Zero root .py files. models/__init__.py has no __getattr__ hack.`
+- What should happen next: `integrate WP-10, tag accepted/wp-10. Root file migration program (WP-08–10) is complete. Evaluate next priorities: resource lifecycle extraction from sweep.py, debug accumulation cleanup, or paper preparation.`
+- Immediate next task (concrete): `integrate WP-10 into feature/team-research-restructure-plan, tag accepted/wp-10. Then assess next workpackage priorities with maintainer.`
+- Immediate validation for that task: `all tests pass, zero root .py files, models/__init__.py has no __getattr__, dependency graph is unidirectional.`
 - Known blockers/risks now: `none`
 - Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ in a future WP.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
@@ -393,6 +395,7 @@ Known future cleanup (deferred):
 - **WP-07 (legacy removal and thorough refactor)**: Deleted 8 root compatibility wrappers (`main.py`, `transmm.py`, `feature_gradient_gating.py`, `config.py`, `data_types.py`, `comparsion.py`, `analysis_feature_case_studies.py`, `sae.py`). Removed deprecated `transmm_prisma_enhanced` and `generate_attribution_prisma_enhanced` from `core/attribution.py` (along with unused `import warnings` and `HookedSAEViT` import). Updated 4 root files to package imports: `pipeline.py` (`config`→`gradcamfaith.core.config`, `data_types`→`gradcamfaith.core.types`), `faithfulness.py` (same), `io_utils.py` (`data_types`→`gradcamfaith.core.types`), `saco.py` (same). Rewrote `test_smoke_contracts.py` to package-only imports (removed all root wrapper import tests, added `SweepConfig` to import check). Rewrote `test_attribution_boundary_contracts.py` (removed `test_legacy_wrappers_deprecated`, added `test_deprecated_shims_removed`). All 14 tests pass. Resource extraction from sweep.py deferred to future WP.
 - **WP-08 (structural move of root files)**: Migrated 7 root files into package: `dataset_config.py`→`data/dataset_config.py`, `unified_dataloader.py`→`data/dataloader.py` (renamed), `io_utils.py`→`data/io_utils.py`, `setup.py`→`data/setup.py`, `clip_classifier.py`→`models/clip_classifier.py`, `faithfulness.py`→`experiments/faithfulness.py`, `saco.py`→`experiments/saco.py`. Updated ~25 import sites across `src/gradcamfaith/`, `pipeline.py`, and `tests/`. Updated `data/__init__.py` to re-export from new `dataset_config` location. Only `pipeline.py` remains at root. All 14 tests pass.
 - **WP-09 (cleanup and consolidation)**: Removed 14 dead re-exports from `data/setup.py` — kept only imports actually used by `main()` plus `convert_dataset` (used by `pipeline.py`). Promoted conditional `get_dataset_config` imports to top-level in `experiments/saco.py` and removed redundant inline import in `experiments/faithfulness.py`. Updated `pip install` hint to `uv add` in `data/setup.py`. All 14 tests pass.
+- **WP-10 (pipeline breakup)**: Decomposed root `pipeline.py` (436 lines) into focused package modules. Created `experiments/pipeline.py` (orchestrator: `run_unified_pipeline`), `experiments/classify.py` (per-image: `save_attribution_bundle_to_files`, `classify_explain_single_image`). Added `extract_saco_summary` to `experiments/saco.py` (extracted from inline SaCo result extraction). Moved `prepare_dataset_if_needed` to `data/setup.py`. Deleted dead code: `classify_single_image` (never called), line 271 dead expression (ternary result never assigned), re-exports of `load_model_for_dataset`/`load_steering_resources` (callers now import directly). Replaced `models/__init__.py` lazy `__getattr__` with clean eager re-exports — resolves circular dependency `pipeline → models.load → models/__init__ → pipeline`. Updated 4 consumer import sites: `experiments/sweep.py`, `experiments/sae_train.py`, `experiments/case_studies.py`, `tests/test_smoke_contracts.py`. Updated `test_attribution_boundary_contracts.py` to check `experiments/classify.py` instead of root `pipeline`. Root `pipeline.py` deleted. Zero root `.py` files remain. All 14 tests pass. Known future cleanup: debug accumulation block (~90 lines) in `experiments/pipeline.py` — extract into helper when debug mode evolves.
 
 ## Tooling and Commands
 Preferred command style:
@@ -733,14 +736,13 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Integrate WP-07 into `feature/team-research-restructure-plan`, tag `accepted/wp-07`.
-2. Create branch `wp/WP-08-root-file-migration` from integration HEAD.
-3. Execute WP-08: move 7 leaf root files into package, update ~25 import sites, delete root files.
-4. Verify all tests pass. Integrate, tag `accepted/wp-08`.
-5. Execute WP-09 on new branch: cleanup re-exports, promote conditional imports, define clean `__init__.py` APIs.
-6. Verify all tests pass. Integrate, tag `accepted/wp-09`.
-7. Execute WP-10 on new branch: decompose `pipeline.py` into `experiments/pipeline.py` + `experiments/classify.py`, resolve circular dependency, delete root `pipeline.py`.
-8. Verify all tests pass, zero root `.py` files. Integrate, tag `accepted/wp-10`.
+1. Integrate WP-10 into `feature/team-research-restructure-plan`, tag `accepted/wp-10`.
+2. Root file migration program (WP-08–10) is complete. Zero root `.py` files remain.
+3. Assess next priorities with maintainer:
+   - Resource lifecycle extraction from `experiments/sweep.py` to `models/` (deferred from WP-06D).
+   - Debug accumulation cleanup in `experiments/pipeline.py` (~90 lines).
+   - Paper preparation infrastructure (frozen configs, reproduction entrypoints).
+   - WP-06E (unused-argument + dead-surface cleanup).
 
 ## Done Criteria for This Rework
 - Core method code is isolated from experiment orchestration.

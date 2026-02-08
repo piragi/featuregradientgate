@@ -728,6 +728,39 @@ def analyze_faithfulness_vs_correctness_from_objects(
     return pd.DataFrame(analysis_data_list)
 
 
+def extract_saco_summary(saco_analysis: dict) -> dict:
+    """Extract overall, per-class, and by-correctness SaCo statistics.
+
+    Args:
+        saco_analysis: Output dict from ``run_binned_attribution_analysis``.
+
+    Returns:
+        Dict with keys ``mean``, ``std``, ``n_samples``, ``per_class``,
+        ``by_correctness``.  Empty dict if analysis contains no
+        ``faithfulness_correctness`` key.
+    """
+    saco_results: Dict[str, Any] = {}
+    if not saco_analysis or "faithfulness_correctness" not in saco_analysis:
+        return saco_results
+
+    fc_df = saco_analysis["faithfulness_correctness"]
+
+    # Overall statistics
+    saco_results['mean'] = fc_df["saco_score"].mean()
+    saco_results['std'] = fc_df["saco_score"].std()
+    saco_results['n_samples'] = len(fc_df)
+
+    # Per-class breakdown
+    per_class_stats = fc_df.groupby('true_class')['saco_score'].agg(['mean', 'std', 'count'])
+    saco_results['per_class'] = per_class_stats.to_dict('index')
+
+    # Correctness breakdown
+    correctness_stats = fc_df.groupby('is_correct')['saco_score'].agg(['mean', 'std', 'count'])
+    saco_results['by_correctness'] = correctness_stats.to_dict('index')
+
+    return saco_results
+
+
 def analyze_key_attribution_patterns(df: pd.DataFrame, model, config) -> pd.DataFrame:
     """
     Simplified version of attribution patterns analysis.
