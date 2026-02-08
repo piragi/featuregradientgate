@@ -49,20 +49,15 @@ For concurrent paper release:
 - Next slice always branches from the new integration HEAD after the accepted checkpoint is in.
 - Promotion to `main` happens later as a separate integration decision after workpackage validation.
 
-## Current Repo Snapshot (post WP-07)
-- Root compatibility wrappers have been **removed** (WP-07): `main.py`, `transmm.py`, `feature_gradient_gating.py`, `config.py`, `data_types.py`, `comparsion.py`, `analysis_feature_case_studies.py`, `sae.py`.
-- Deprecated attribution shims (`transmm_prisma_enhanced`, `generate_attribution_prisma_enhanced`) have been **removed** from `core/attribution.py`.
-- Remaining root-level real code (not yet migrated to package):
-  - `pipeline.py` — runtime orchestrator (`run_unified_pipeline`, `classify_single_image`, etc.). Imports updated to use `gradcamfaith.core.*` package paths.
-  - `dataset_config.py` — dataset configuration registry and transforms.
-  - `clip_classifier.py` — CLIP zero-shot classification wrappers.
-  - `faithfulness.py`, `saco.py`, `io_utils.py`, `unified_dataloader.py`, `setup.py` — supporting modules. Imports updated to use `gradcamfaith.core.*` package paths.
-- Package code (`src/gradcamfaith/`) is the canonical source for all migrated modules:
+## Current Repo Snapshot (post WP-09)
+- Only one root `.py` file remains: `pipeline.py` (WP-10 will decompose and delete it).
+- Package code (`src/gradcamfaith/`) is the canonical source for all modules:
   - `core/` — attribution, gating, config, types
-  - `experiments/` — sweep, sae_train, comparison, case_studies
-  - `data/` — download, prepare
-  - `models/` — load, sae_resources
+  - `data/` — dataset_config, dataloader, download, prepare, setup, io_utils
+  - `models/` — load, sae_resources, clip_classifier
+  - `experiments/` — sweep, sae_train, comparison, case_studies, faithfulness, saco
   - `examples/` — minimal_run
+- `models/__init__.py` still has lazy `__getattr__` for `run_unified_pipeline` from root `pipeline.py` — resolved in WP-10.
 
 ## Target Structure
 Package layout under `src/gradcamfaith` with unidirectional dependency flow: `core → data → models → experiments`.
@@ -277,38 +272,59 @@ Hard constraints:
 
 ### WP-10 Concrete Plan (Pipeline Breakup)
 
-Goal: Decompose `pipeline.py` (436 lines, 5 functions) into focused modules inside `experiments/`. Resolve the circular dependency in `models/__init__.py`. Delete root `pipeline.py`. Zero root `.py` files remain.
+Goal: Decompose root `pipeline.py` (436 lines, 5 functions) into focused package modules. Remove dead code. Resolve the circular dependency in `models/__init__.py`. Delete root `pipeline.py`. Zero root `.py` files remain.
 
-Current `pipeline.py` function inventory:
-- `prepare_dataset_if_needed` (lines 35-61) — data preparation check + convert_dataset call
-- `classify_single_image` (lines 64-108) — single image classification with caching
-- `save_attribution_bundle_to_files` (lines 111-130) — save attribution arrays to .npy
-- `classify_explain_single_image` (lines 133-212) — classify + explain single image
-- `run_unified_pipeline` (lines 215-436) — full orchestrator (prepare, load, loop images, run faithfulness, run SaCo)
-- Re-exports: `load_model_for_dataset`, `load_steering_resources` (lines 31-32)
+Current `pipeline.py` function inventory (pre-decomposition analysis):
+- `prepare_dataset_if_needed` (lines 34-60) — data preparation check + `convert_dataset` call. Pure data logic.
+- `classify_single_image` (lines 63-107) — **DEAD CODE**: defined but never called anywhere in the codebase.
+- `save_attribution_bundle_to_files` (lines 110-129) — save `.npy` attribution arrays. Helper for `classify_explain_single_image`.
+- `classify_explain_single_image` (lines 132-211) — per-image classification + attribution + caching. Core per-image logic.
+- `run_unified_pipeline` (lines 214-435) — full orchestrator: prepare data, loop images, accumulate debug, save CSV, run faithfulness, run SaCo, extract SaCo stats.
+- Re-exports (lines 30-31): `load_model_for_dataset`, `load_steering_resources` — pure pass-throughs, canonical code already in `models/`.
+
+Known bugs/dead code in current `pipeline.py`:
+- Line 271: dead expression `config.classify.use_clip if hasattr(config.classify, 'use_clip') else False` — result never assigned.
+- `classify_single_image`: never called. Remove entirely.
 
 Decomposition:
 
-| Function | New location | Rationale |
-|---|---|---|
-| `prepare_dataset_if_needed` | `data/setup.py` | Pure data preparation logic |
-| `classify_single_image` | `experiments/classify.py` (new) | Per-image classification |
-| `save_attribution_bundle_to_files` | `experiments/classify.py` (new) | Per-image I/O |
-| `classify_explain_single_image` | `experiments/classify.py` (new) | Per-image classification + attribution |
-| `run_unified_pipeline` | `experiments/pipeline.py` (new) | Orchestrator |
-| Re-exports | **Deleted** | Callers import directly from `models.load` / `models.sae_resources` |
+| Function | Action | Destination | Rationale |
+|---|---|---|---|
+| `classify_single_image` | **Delete** | — | Dead code, never called |
+| `prepare_dataset_if_needed` | **Move** | `data/setup.py` | Pure data preparation logic |
+| `save_attribution_bundle_to_files` | **Move** | `experiments/classify.py` (new) | Per-image I/O helper |
+| `classify_explain_single_image` | **Move** | `experiments/classify.py` (new) | Per-image classification + attribution |
+| `run_unified_pipeline` (lines 214-413) | **Move** | `experiments/pipeline.py` (new) | Orchestrator — loop, debug accumulation, CSV save, faithfulness call |
+| SaCo result extraction (lines 414-431) | **Move into `saco.py`** | `experiments/saco.py` | Belongs with SaCo logic; expose as utility (e.g. `extract_saco_summary`) called by orchestrator |
+| Dead expression (line 271) | **Delete** | — | Bug: result of ternary never assigned |
+| Re-exports (lines 30-31) | **Delete** | — | Callers import directly from `models.load` / `models.sae_resources` |
+
+Debug accumulation (lines 301-391, ~90 lines inside `run_unified_pipeline`):
+- Stays inline in `experiments/pipeline.py` for now — it's orchestration bookkeeping.
+- **Noted as future cleanup**: extract debug accumulation + save into a helper when debug mode gets more complex or when we add new debug channels.
 
 Circular dependency resolution:
 - Current cycle: `pipeline.py → models.load → models/__init__ → pipeline.py` (via lazy `__getattr__`)
 - Fix: Remove `__getattr__` from `models/__init__.py`. `run_unified_pipeline` belongs in `experiments/`, not `models/`. After decomposition, `experiments/pipeline.py` imports from `models.load` (downward dependency, no cycle).
-- Callers that imported `run_unified_pipeline` from root `pipeline` or `gradcamfaith.models` update to `from gradcamfaith.experiments.pipeline import run_unified_pipeline`.
 
-Import updates:
+Import updates (all `from pipeline import` sites):
 - `experiments/sweep.py:31` → `from gradcamfaith.experiments.pipeline import run_unified_pipeline` + `from gradcamfaith.models.load import load_model_for_dataset` + `from gradcamfaith.models.sae_resources import load_steering_resources`
 - `experiments/sae_train.py:14` → `from gradcamfaith.models.load import load_model_for_dataset`
-- `experiments/case_studies.py:73` → direct model imports from `gradcamfaith.models.*`
-- `tests/test_smoke_contracts.py:16,42` → package path imports
-- `models/__init__.py` → remove lazy `__getattr__`, add clean re-exports for `load_model_for_dataset`, `load_steering_resources`, `CLIPClassifier`, etc.
+- `experiments/case_studies.py:73` → `from gradcamfaith.models.load import load_model_for_dataset` + `from gradcamfaith.models.sae_resources import load_steering_resources`
+- `tests/test_smoke_contracts.py:16,42` → `from gradcamfaith.experiments.pipeline import run_unified_pipeline` + `from gradcamfaith.models.load import load_model_for_dataset` + `from gradcamfaith.models.sae_resources import load_steering_resources`
+- `models/__init__.py` → remove lazy `__getattr__` entirely, replace with clean eager re-exports of `load_model_for_dataset`, `load_steering_resources`
+
+New file: `experiments/classify.py` (~80 lines):
+- `save_attribution_bundle_to_files` — save `.npy` arrays
+- `classify_explain_single_image` — per-image classification + attribution + caching
+- Imports: `gradcamfaith.data.io_utils`, `gradcamfaith.data.dataloader`, `gradcamfaith.data.dataset_config`, `gradcamfaith.core.attribution`, `gradcamfaith.core.types`
+
+New file: `experiments/pipeline.py` (~200 lines):
+- `run_unified_pipeline` — orchestrator (prepare, loop, debug accumulate, save CSV, faithfulness, SaCo)
+- Imports: `gradcamfaith.data.*`, `gradcamfaith.experiments.classify`, `gradcamfaith.experiments.faithfulness`, `gradcamfaith.experiments.saco`, `gradcamfaith.models.clip_classifier`
+
+Addition to `experiments/saco.py`:
+- `extract_saco_summary(saco_analysis)` — extract overall/per-class/by-correctness SaCo stats from analysis output. Currently inlined in `run_unified_pipeline` lines 414-431.
 
 Final dependency graph (no cycles):
 ```
@@ -325,7 +341,11 @@ Hard constraints:
 - All tests pass.
 - Zero root `.py` files remain.
 - `models/__init__.py` has no `__getattr__` hack.
-- No behavior changes.
+- No behavior changes (except dead code removal).
+
+Known future cleanup (deferred):
+- Debug accumulation block in `experiments/pipeline.py` (~90 lines) — extract into helper when debug mode evolves.
+- `experiments/classify.py` uses `io_utils` from `data/` for caching — evaluate whether cache logic should move closer to classify when it becomes more complex.
 
 ### Decision Log
 - **WP-01**: Added `[build-system]` (hatchling) and `[tool.hatch.build.targets.wheel]` to pyproject.toml to make `src/gradcamfaith` an installable package. This is required for absolute imports (`from gradcamfaith.core.config import ...`) to work. `uv sync` installs the package in dev mode automatically.
