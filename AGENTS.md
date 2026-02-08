@@ -65,68 +65,69 @@ For concurrent paper release:
   - `examples/` — minimal_run
 
 ## Target Structure
-Use a real package layout under `src/gradcamfaith` with clear boundaries:
+Package layout under `src/gradcamfaith` with unidirectional dependency flow: `core → data → models → experiments`.
 
 ```text
 src/gradcamfaith/
   core/
-    attribution.py
-    gating.py
-    faithfulness.py
-    saco.py
-    types.py
-    config.py
+    attribution.py      # TransLRP attribution + compute_attribution orchestrator
+    gating.py           # feature-gradient gate computation
+    types.py            # shared dataclasses (ClassificationResult, etc.)
+    config.py           # PipelineConfig, FileConfig, BoostingConfig
   data/
-    datasets.py
-    dataloader.py
-    prepare.py
-    download.py
+    dataset_config.py   # DatasetConfig, transform factories, dataset registry
+    dataloader.py       # UnifiedMedicalDataset, create_dataloader
+    download.py         # download helpers
+    prepare.py          # dataset conversion
+    setup.py            # download+prepare CLI orchestrator
+    io_utils.py         # cache and results I/O
   models/
-    load.py
-    clip.py
-    sae_resources.py
+    load.py             # load_model_for_dataset
+    sae_resources.py    # load_steering_resources
+    clip_classifier.py  # CLIPClassifier, CLIPModelWrapper
   experiments/
-    sweep.py
-    sae_train.py
-    comparison.py
-    case_studies.py
+    pipeline.py         # run_unified_pipeline (main experiment orchestrator)
+    classify.py         # per-image classification + attribution
+    sweep.py            # parameter sweep orchestration + SweepConfig
+    faithfulness.py     # faithfulness metrics (PatchPixelFlipping, FaithfulnessCorrelation)
+    saco.py             # SaCo attribution analysis
+    sae_train.py        # SAE training
+    comparison.py       # post-hoc experiment comparison
+    case_studies.py     # qualitative case study analysis
   examples/
     minimal_run.py
     README.md
-  cli/
-    main.py
-    setup.py
 ```
 
 Notes:
 - Keep modules focused. Prefer small composable files over one large orchestrator.
-- Keep orchestration in `cli/` and experiment entrypoints; keep method logic in `core/`.
+- No circular dependencies: experiments may import from models/data/core; models from data/core; data from core only.
 - Add at least one runnable example (`examples/minimal_run.py`) that demonstrates the end-to-end happy path on a tiny subset.
 
 ## Migration Map (Current -> Target)
-- `transmm.py` + `feature_gradient_gating.py` -> `core/attribution.py` and `core/gating.py`.
-- `faithfulness.py` -> `core/faithfulness.py`.
-- `saco.py` -> `core/saco.py`.
-- `config.py` + `data_types.py` -> `core/config.py` + `core/types.py`.
-- `dataset_config.py` + `unified_dataloader.py` -> `data/datasets.py` + `data/dataloader.py`.
-- `setup.py` -> split into `data/download.py` and `data/prepare.py`; keep thin CLI wrapper.
-- `pipeline.py` -> split responsibilities across `models/load.py`, `models/sae_resources.py`, and a lighter experiment/runtime orchestrator.
-- `clip_classifier.py` -> `models/clip.py`.
-- `main.py` -> `experiments/sweep.py` + thin CLI wrapper.
-- `sae.py` -> `experiments/sae_train.py`.
-- `comparsion.py` (typo) -> `experiments/comparison.py` (keep compatibility shim during migration).
-- `analysis_feature_case_studies.py` -> `experiments/case_studies.py`.
+Completed migrations (WP-01 through WP-07):
+- `transmm.py` + `feature_gradient_gating.py` → `core/attribution.py` and `core/gating.py` (done WP-01/WP-06B)
+- `config.py` + `data_types.py` → `core/config.py` + `core/types.py` (done WP-01)
+- `main.py` → `experiments/sweep.py` (done WP-04, root wrapper removed WP-07)
+- `sae.py` → `experiments/sae_train.py` (done WP-04, root wrapper removed WP-07)
+- `comparsion.py` → `experiments/comparison.py` (done WP-04, root wrapper removed WP-07)
+- `analysis_feature_case_studies.py` → `experiments/case_studies.py` (done WP-04, root wrapper removed WP-07)
+- All 8 thin root compatibility wrappers removed (done WP-07)
+
+Remaining migrations (WP-08 through WP-10):
+- `dataset_config.py` → `data/dataset_config.py` (WP-08)
+- `unified_dataloader.py` → `data/dataloader.py` (WP-08, renamed)
+- `io_utils.py` → `data/io_utils.py` (WP-08)
+- `setup.py` → `data/setup.py` (WP-08)
+- `clip_classifier.py` → `models/clip_classifier.py` (WP-08)
+- `faithfulness.py` → `experiments/faithfulness.py` (WP-08)
+- `saco.py` → `experiments/saco.py` (WP-08)
+- `pipeline.py` → `experiments/pipeline.py` + `experiments/classify.py` (WP-10, decomposed)
 
 ## Legacy Compatibility Policy
-During migration:
-- Keep root entry scripts as compatibility shims that import and call new package modules.
-- Do not break existing root commands immediately:
-  - `uv run main.py`
-  - `uv run setup.py`
-  - `uv run sae.py`
-  - `uv run comparsion.py`
-  - `uv run analysis_feature_case_studies.py`
-- Remove compatibility shims only after equivalent package entrypoints are validated and documented.
+- All root compatibility wrappers have been removed (WP-07). No root shim maintenance needed.
+- Remaining root files (`pipeline.py`, `dataset_config.py`, etc.) are canonical code, not shims — they will be migrated into the package and deleted (WP-08 through WP-10).
+- After WP-10: zero root `.py` files. All entrypoints via `gradcamfaith.*` package paths only.
 
 ## Workflow Policy (Mandatory)
 Use a feature branch for the rework.
@@ -179,10 +180,10 @@ This tracker is a required, evolving log for project state and near-term executi
 - WP-07 status: `done, pending integration — 8 root wrappers deleted, deprecated attribution shims removed, all imports updated to package paths. All 14 tests pass.`
 - What happened most recently: `WP-07: removed 8 root compatibility wrappers, deleted transmm_prisma_enhanced and generate_attribution_prisma_enhanced from attribution.py, updated pipeline.py/faithfulness.py/io_utils.py/saco.py imports to package paths, rewrote both test files for package-only imports.`
 - Reviewer decision: `pending`
-- What should happen next: `integrate WP-07, then plan next slice (resource extraction from sweep.py or further cleanup).`
-- Immediate next task (concrete): `integrate WP-07 into feature/team-research-restructure-plan, tag accepted/wp-07.`
-- Immediate validation for that task: `all 14 tests pass with uv run pytest tests/.`
-- Known blockers/risks now: `none`
+- What should happen next: `integrate WP-07, then execute WP-08 (structural move of 7 leaf root files into package).`
+- Immediate next task (concrete): `WP-08: move dataset_config, unified_dataloader, io_utils, setup, clip_classifier, faithfulness, saco into their target package locations. Update all imports (~25 sites). Delete root files. pipeline.py stays at root until WP-10.`
+- Immediate validation for that task: `all tests pass with uv run pytest tests/. No root .py files except pipeline.py.`
+- Known blockers/risks now: `dataset_config.py is imported by 10+ files — must move first, then update all consumers atomically.`
 - Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ in a future WP.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
 
@@ -222,6 +223,107 @@ Hard constraints:
 - Same output directory structure and file naming (tests depend on `layers_3_kappa_0.5_combined_clamp_10.0` naming).
 - Signatures may change freely (tests catch breakage).
 - All existing tests must pass.
+
+### WP-08 Concrete Plan (Structural Move of Leaf Root Files)
+
+Goal: Move 7 of 8 remaining root `.py` files into their target package locations. Update all imports. Delete root files. `pipeline.py` stays at root (deferred to WP-10).
+
+Move table:
+
+| Root file | Destination | New import path |
+|---|---|---|
+| `dataset_config.py` (230L) | `data/dataset_config.py` | `gradcamfaith.data.dataset_config` |
+| `unified_dataloader.py` (206L) | `data/dataloader.py` | `gradcamfaith.data.dataloader` |
+| `io_utils.py` (96L) | `data/io_utils.py` | `gradcamfaith.data.io_utils` |
+| `setup.py` (71L) | `data/setup.py` | `gradcamfaith.data.setup` |
+| `clip_classifier.py` (278L) | `models/clip_classifier.py` | `gradcamfaith.models.clip_classifier` |
+| `faithfulness.py` (929L) | `experiments/faithfulness.py` | `gradcamfaith.experiments.faithfulness` |
+| `saco.py` (746L) | `experiments/saco.py` | `gradcamfaith.experiments.saco` |
+
+Import rewrite sites (~25 total):
+- `dataset_config` — 15 sites: `data/__init__.py:2`, `data/prepare.py:18,195,257`, `models/load.py:14`, `experiments/sweep.py:30`, `experiments/sae_train.py:13`, `experiments/case_studies.py:72,1108`, plus internal imports in moving files (`unified_dataloader:16`, `faithfulness:19,303`, `saco:264`, `setup:45`), plus `pipeline.py:23`
+- `clip_classifier` — 2 sites: `models/load.py:51` (conditional), `pipeline.py:397` (conditional)
+- `unified_dataloader` — 2 sites: `experiments/case_studies.py:74`, `pipeline.py:28`
+- `io_utils` — 1 site: `pipeline.py:19`
+- `faithfulness` — 1 site: `pipeline.py:24`
+- `saco` — 1 site: `pipeline.py:25`
+- `setup` — 3 sites: `pipeline.py:26`, `tests/test_smoke_contracts.py:17,43`, `tests/test_integration_fresh_env.py:32`
+
+`__init__.py` updates:
+- `data/__init__.py` — re-export `get_dataset_config`, `DatasetConfig`, key configs from new `dataset_config` location
+- `models/__init__.py` — add `clip_classifier` re-exports (keep existing lazy `__getattr__` for pipeline until WP-10)
+
+Hard constraints:
+- All test pass after the move.
+- `pipeline.py` stays at root — its internal imports updated to point at new package paths, but the file itself is not moved.
+- No behavior changes. Structural move only.
+
+### WP-09 Concrete Plan (Cleanup and Consolidation)
+
+Goal: Clean up after WP-08 — remove dead re-exports, promote conditional imports to top-level, define clean `__init__.py` public APIs.
+
+Concrete actions:
+1. **`data/setup.py`**: Remove the 14 re-export lines (`download_with_progress`, `extract_tar_gz`, `download_hyperkvasir`, etc.). These were re-exported for backward compatibility when `setup.py` was a root shim. After migration, callers go directly to `data.download` / `data.prepare`. Keep only `main()`.
+2. **Conditional imports → top-level**: `saco.py:264` has conditional `from dataset_config import get_dataset_config` inside a function body. `faithfulness.py:303` has the same. Now that all files are in the package, these can become top-level imports (no circular dependency risk).
+3. **`data/__init__.py` public API**: Define a clean re-export surface: `get_dataset_config`, `DatasetConfig`, `create_dataloader`, `get_single_image_loader`, `convert_dataset`.
+4. **Evaluate `io_utils` placement**: Contains cache/results I/O used only by `pipeline.py`. Decision: stays in `data/` for now. When pipeline decomposes in WP-10, cache functions naturally move with the classify module.
+5. **Evaluate naming**: `dataloader.py` (from `unified_dataloader.py`) is clean. `io_utils.py` could become `cache.py` but minimal churn preferred — defer.
+
+Hard constraints:
+- No behavior changes. Cleanup only.
+- All tests pass.
+
+### WP-10 Concrete Plan (Pipeline Breakup)
+
+Goal: Decompose `pipeline.py` (436 lines, 5 functions) into focused modules inside `experiments/`. Resolve the circular dependency in `models/__init__.py`. Delete root `pipeline.py`. Zero root `.py` files remain.
+
+Current `pipeline.py` function inventory:
+- `prepare_dataset_if_needed` (lines 35-61) — data preparation check + convert_dataset call
+- `classify_single_image` (lines 64-108) — single image classification with caching
+- `save_attribution_bundle_to_files` (lines 111-130) — save attribution arrays to .npy
+- `classify_explain_single_image` (lines 133-212) — classify + explain single image
+- `run_unified_pipeline` (lines 215-436) — full orchestrator (prepare, load, loop images, run faithfulness, run SaCo)
+- Re-exports: `load_model_for_dataset`, `load_steering_resources` (lines 31-32)
+
+Decomposition:
+
+| Function | New location | Rationale |
+|---|---|---|
+| `prepare_dataset_if_needed` | `data/setup.py` | Pure data preparation logic |
+| `classify_single_image` | `experiments/classify.py` (new) | Per-image classification |
+| `save_attribution_bundle_to_files` | `experiments/classify.py` (new) | Per-image I/O |
+| `classify_explain_single_image` | `experiments/classify.py` (new) | Per-image classification + attribution |
+| `run_unified_pipeline` | `experiments/pipeline.py` (new) | Orchestrator |
+| Re-exports | **Deleted** | Callers import directly from `models.load` / `models.sae_resources` |
+
+Circular dependency resolution:
+- Current cycle: `pipeline.py → models.load → models/__init__ → pipeline.py` (via lazy `__getattr__`)
+- Fix: Remove `__getattr__` from `models/__init__.py`. `run_unified_pipeline` belongs in `experiments/`, not `models/`. After decomposition, `experiments/pipeline.py` imports from `models.load` (downward dependency, no cycle).
+- Callers that imported `run_unified_pipeline` from root `pipeline` or `gradcamfaith.models` update to `from gradcamfaith.experiments.pipeline import run_unified_pipeline`.
+
+Import updates:
+- `experiments/sweep.py:31` → `from gradcamfaith.experiments.pipeline import run_unified_pipeline` + `from gradcamfaith.models.load import load_model_for_dataset` + `from gradcamfaith.models.sae_resources import load_steering_resources`
+- `experiments/sae_train.py:14` → `from gradcamfaith.models.load import load_model_for_dataset`
+- `experiments/case_studies.py:73` → direct model imports from `gradcamfaith.models.*`
+- `tests/test_smoke_contracts.py:16,42` → package path imports
+- `models/__init__.py` → remove lazy `__getattr__`, add clean re-exports for `load_model_for_dataset`, `load_steering_resources`, `CLIPClassifier`, etc.
+
+Final dependency graph (no cycles):
+```
+core (types, config, gating, attribution)
+  ↑
+data (dataset_config, dataloader, download, prepare, setup, io_utils)
+  ↑
+models (load, sae_resources, clip_classifier)
+  ↑
+experiments (pipeline, classify, sweep, faithfulness, saco, ...)
+```
+
+Hard constraints:
+- All tests pass.
+- Zero root `.py` files remain.
+- `models/__init__.py` has no `__getattr__` hack.
+- No behavior changes.
 
 ### Decision Log
 - **WP-01**: Added `[build-system]` (hatchling) and `[tool.hatch.build.targets.wheel]` to pyproject.toml to make `src/gradcamfaith` an installable package. This is required for absolute imports (`from gradcamfaith.core.config import ...`) to work. `uv sync` installs the package in dev mode automatically.
@@ -579,22 +681,24 @@ All workpackages below are designed for coder ownership and maintainer review.
   - for slices touching `core/attribution.py` or `core/gating.py`, provide pre/post equivalence evidence on fixed-seed synthetic inputs (max absolute diff reported)
 - Deliverables: significantly improved readability in core + experiments, explicit responsibility documentation, and preserved runtime semantics.
 
-### WP-07 Legacy Removal and Thorough Refactor
-- Goal: remove all legacy compatibility wrappers, deprecated shims, and stale indirection. Clean up the codebase so only the package paths exist. Extract misplaced concerns to their proper modules.
+### WP-07 Legacy Removal (done)
+- Status: **done** (commit `860e6bc` on `wp/WP-07-legacy-removal`, pending integration).
+- Completed: removed 8 root compatibility wrappers, deleted deprecated attribution shims, updated all imports and tests to package paths.
+- Deferred to WP-08/09/10: root canonical code migration, pipeline decomposition, resource lifecycle extraction.
+
+### WP-08/09/10: Complete Root File Migration and Pipeline Breakup
+- Goal: migrate all remaining root `.py` files into the package, clean up post-migration, and decompose `pipeline.py` into focused modules. Zero root `.py` files when done.
 - In scope:
-  - **Remove root compatibility wrappers**: `main.py`, `transmm.py`, `feature_gradient_gating.py`, `config.py`, `data_types.py`, `comparsion.py`, `analysis_feature_case_studies.py`, `sae.py` (root shims that re-export from `gradcamfaith.*`).
-  - **Remove deprecated attribution shims**: `transmm_prisma_enhanced` and `generate_attribution_prisma_enhanced` in `core/attribution.py` (scheduled for removal since WP-06B-R3).
-  - **Extract resource lifecycle from sweep.py**: move `_load_dataset_resources`, `_release_dataset_resources`, `_gpu_cleanup`, `_build_imagenet_clip_prompts` to `models/` (e.g. `models/resources.py` or extend `models/load.py`).
-  - **Update all tests**: replace root-wrapper imports with package paths. Remove signature checks for deleted root wrappers.
-  - **Update `pipeline.py`**: decide whether `pipeline.py` itself becomes a package module or stays as the last root-level orchestrator.
-  - **Update `README.md` and `AGENTS.md`** to reflect final structure and command paths.
+  - **WP-08 (structural move)**: move 7 leaf root files into package, update ~25 import sites, delete root files. See WP-08 Concrete Plan above.
+  - **WP-09 (cleanup)**: remove dead re-exports from `setup.py`, promote conditional imports, define clean `__init__.py` APIs. See WP-09 Concrete Plan above.
+  - **WP-10 (pipeline breakup)**: decompose `pipeline.py` into `experiments/pipeline.py` + `experiments/classify.py`, move `prepare_dataset_if_needed` to `data/setup.py`, resolve `models/__init__.py` circular dependency. See WP-10 Concrete Plan above.
 - Hard constraints:
   - All algorithm/metric behavior stays the same.
-  - All existing tests must pass (updated to package paths).
-  - `uv run python -m gradcamfaith.experiments.sweep` must work as the new entry point.
-- Depends on: WP-06.
-- Acceptance checks: package entrypoints work, no root wrapper imports remain in tests or package code, `ruff check` clean.
-- Deliverables: clean package-only codebase, no stale wrappers, updated docs.
+  - All existing tests must pass.
+  - Final dependency graph: `core → data → models → experiments` (no cycles).
+- Depends on: WP-07.
+- Acceptance checks: all tests pass, zero root `.py` files, no `__getattr__` hacks, clean `ruff check`.
+- Deliverables: fully packaged codebase, clean dependency graph, decomposed pipeline.
 
 ## Workpackage Review Checklist
 - Scope respected (`in scope` only, no silent expansion).
@@ -605,11 +709,14 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Integrate WP-06D into `feature/team-research-restructure-plan`, tag `accepted/wp-06d`.
-2. Create branch `wp/WP-07-legacy-removal` from integration HEAD.
-3. Execute WP-07: remove root wrappers, deprecated shims, extract resource lifecycle to `models/`, update all tests and imports to package paths.
-4. Verify all tests pass with package-only paths.
-5. Integrate into `feature/team-research-restructure-plan`, tag `accepted/wp-07`.
+1. Integrate WP-07 into `feature/team-research-restructure-plan`, tag `accepted/wp-07`.
+2. Create branch `wp/WP-08-root-file-migration` from integration HEAD.
+3. Execute WP-08: move 7 leaf root files into package, update ~25 import sites, delete root files.
+4. Verify all tests pass. Integrate, tag `accepted/wp-08`.
+5. Execute WP-09 on new branch: cleanup re-exports, promote conditional imports, define clean `__init__.py` APIs.
+6. Verify all tests pass. Integrate, tag `accepted/wp-09`.
+7. Execute WP-10 on new branch: decompose `pipeline.py` into `experiments/pipeline.py` + `experiments/classify.py`, resolve circular dependency, delete root `pipeline.py`.
+8. Verify all tests pass, zero root `.py` files. Integrate, tag `accepted/wp-10`.
 
 ## Done Criteria for This Rework
 - Core method code is isolated from experiment orchestration.
