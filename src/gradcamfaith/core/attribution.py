@@ -12,20 +12,15 @@ Internal helpers:
     run_model_forward_backward    — forward/backward with hook data
     setup_hooks                   — hook wiring for vit_prisma
     _postprocess_attribution      — reshape/interpolate/normalize output
-
-Deprecated (delegate to compute_attribution):
-    transmm_prisma_enhanced
-    generate_attribution_prisma_enhanced
 """
 
-import warnings
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 from vit_prisma.configs.HookedViTConfig import HookedViTConfig
-from vit_prisma.models.base_vit import HookedSAEViT, HookedViT
+from vit_prisma.models.base_vit import HookedViT
 
 from gradcamfaith.core.config import PipelineConfig
 from gradcamfaith.core.gating import apply_feature_gradient_gating
@@ -296,87 +291,3 @@ def compute_attribution(
         "raw_attribution": raw_patch_map,
         "debug_info": debug_info_per_layer if debug else {},
     }
-
-
-# ---------------------------------------------------------------------------
-# Deprecated legacy entrypoints — delegate to compute_attribution
-# ---------------------------------------------------------------------------
-
-def transmm_prisma_enhanced(
-    model_prisma: HookedViT,
-    input_tensor: torch.Tensor,
-    config: PipelineConfig,
-    idx_to_class: Dict[int, str],
-    device: Optional[torch.device] = None,
-    img_size: int = 224,
-    steering_resources: Optional[Dict[int, Dict[str, Any]]] = None,
-    enable_feature_gradients: bool = True,
-    feature_gradient_layers: Optional[List[int]] = None,
-    clip_classifier: Optional[Any] = None,
-    debug: bool = False,
-) -> Tuple[Dict[str, Any], np.ndarray, np.ndarray, Dict[int, Dict[str, Any]]]:
-    """DEPRECATED — use ``compute_attribution`` instead.
-
-    Thin wrapper that delegates to compute_attribution and repacks the dict
-    output into the legacy 4-tuple format. Scheduled for removal in WP-07.
-    """
-    warnings.warn(
-        "transmm_prisma_enhanced is deprecated, use compute_attribution instead",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    result = compute_attribution(
-        model_prisma=model_prisma,
-        input_tensor=input_tensor,
-        config=config,
-        idx_to_class=idx_to_class,
-        device=device,
-        img_size=img_size,
-        steering_resources=steering_resources,
-        enable_feature_gradients=enable_feature_gradients,
-        feature_gradient_layers=feature_gradient_layers,
-        clip_classifier=clip_classifier,
-        debug=debug,
-    )
-    return (
-        result["predictions"],
-        result["attribution_positive"],
-        result["raw_attribution"],
-        result["debug_info"],
-    )
-
-
-def generate_attribution_prisma_enhanced(
-    model: HookedSAEViT,
-    input_tensor: torch.Tensor,
-    config: PipelineConfig,
-    idx_to_class: Dict[int, str],
-    device: Optional[torch.device] = None,
-    steering_resources: Optional[Dict[int, Dict[str, Any]]] = None,
-    enable_feature_gradients: bool = True,
-    feature_gradient_layers: Optional[List[int]] = None,
-    clip_classifier: Optional[Any] = None,
-) -> Dict[str, Any]:
-    """DEPRECATED — use ``compute_attribution`` instead.
-
-    Thin wrapper that reads debug_mode from config and delegates to
-    compute_attribution. Scheduled for removal in WP-07.
-    """
-    warnings.warn(
-        "generate_attribution_prisma_enhanced is deprecated, use compute_attribution instead",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    debug = getattr(config.classify.boosting, 'debug_mode', False)
-    return compute_attribution(
-        model_prisma=model,
-        input_tensor=input_tensor,
-        config=config,
-        idx_to_class=idx_to_class,
-        device=device,
-        steering_resources=steering_resources,
-        enable_feature_gradients=enable_feature_gradients,
-        feature_gradient_layers=feature_gradient_layers,
-        clip_classifier=clip_classifier,
-        debug=debug,
-    )
