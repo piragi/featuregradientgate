@@ -174,9 +174,9 @@ This tracker is a required, evolving log for project state and near-term executi
 
 - Program branch: `feature/team-research-restructure-plan`
 - Branching mode: `slice branches + immediate integration + accepted checkpoint tags`
-- Last successful commit reflected here: `WP-06B-R3 accepted and integrated into feature/team-research-restructure-plan`
+- Last successful commit reflected here: `golden-value regression test added to feature/team-research-restructure-plan`
 - Last accepted integration checkpoint: `accepted/wp-06b`
-- What happened most recently: `WP-06B-R3 accepted: compute_attribution is canonical orchestrator, pipeline.py migrated, legacy entrypoints deprecated, boundary contract tests added. Cherry-picked into integration branch and tagged accepted/wp-06b.`
+- What happened most recently: `Added golden-value regression test (test_imagenet_golden_faithfulness_values) for imagenet val subset=500/seed=123/combined/layer3. Catches silent pipeline behavior changes.`
 - Reviewer decision: `accepted`
 - What should happen next: `create wp/WP-06C-gating-boundary-refactor from integration HEAD and execute gating refactor.`
 - Immediate next task (concrete): `WP-06C: split compute_feature_gradient_gate into focused internal helpers (score construction, gate mapping, debug packaging) in core/gating.py. Preserve public signatures.`
@@ -224,6 +224,7 @@ This tracker is a required, evolving log for project state and near-term executi
 - **Validation follow-up (git hygiene)**: Added root `.gitignore` entries for `/models` and `/logs` so full-stack setup/test runs do not leave untracked runtime artifacts that block clean-worktree handoff checks.
 - **WP-06B v1 (attribution boundary refactor)**: Extracted `_postprocess_attribution` helper, removed unused `device` param from `apply_gradient_gating_to_cam`, added role docstrings. Review decision: rework requested — naming clarity insufficient.
 - **WP-06B-R3 (clean attribution API)**: `compute_attribution` is now the single canonical orchestrator returning `{predictions, attribution_positive, raw_attribution, debug_info}`. `pipeline.py` migrated to `compute_attribution` (no longer imports legacy names). `transmm_prisma_enhanced` and `generate_attribution_prisma_enhanced` converted to thin deprecated shims with `DeprecationWarning` and explicit removal plan (WP-07). `transmm.py` root wrapper re-exports `compute_attribution`. Added `tests/test_attribution_boundary_contracts.py` (4 tests). ARG001 findings: 2 (only download.py). Gate equivalence: max_diff == 0.0.
+- **Intermediate (golden-value regression test)**: Added `test_imagenet_golden_faithfulness_values` to `tests/test_integration_fresh_env.py`. Full-stack test runs imagenet val split, subset=500, seed=123, combined gate, layer [3], kappa=0.5, clamp_max=10.0 via `run_parameter_sweep`. Asserts exact golden values for SaCo (mean/std), PixelFlipping (count/mean/median), and FaithfulnessCorrelation (count/mean/median). Explicit cleanup via `shutil.rmtree` in `finally` block. Gated behind `GRADCAMFAITH_RUN_FULL_STACK=1` + CUDA.
 
 ## Tooling and Commands
 Preferred command style:
@@ -243,6 +244,7 @@ Full test coverage is still deferred, but baseline validation now exists. Each s
   - `uv run python scripts/validation/git_workflow_audit.py`
 - Tier-2 heavy integration (opt-in on credentialed CUDA hosts):
   - `GRADCAMFAITH_RUN_FULL_STACK=1 uv run pytest -m integration tests/test_integration_fresh_env.py`
+  - Includes golden-value regression test (`test_imagenet_golden_faithfulness_values`) that validates exact faithfulness metric reproducibility on imagenet val subset.
 
 At minimum, structural tasks must still include minimal smoke validation:
 - Module import sanity (`uv run python -c "..."`).

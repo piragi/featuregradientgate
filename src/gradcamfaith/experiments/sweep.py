@@ -431,7 +431,7 @@ def main():
     Main entry point for running feature gradient gating experiments.
     """
     # Dataset split to use
-    current_mode = "test"  # Options: "train", "val", "test", "dev"
+    current_mode = "val"  # Options: "train", "val", "test", "dev"
 
     # Debug mode - collect detailed data for feature case study analysis
     debug_mode = False
@@ -445,7 +445,7 @@ def main():
 
     # Define parameter grid
     layer_combinations = [
-        [6, 9, 10],
+        [3],
     ]
 
     kappa_values = [0.5]  # Gating strength
@@ -469,8 +469,8 @@ def main():
         clamp_max_values=clamp_max_values,
         current_mode=current_mode,
         debug_mode=debug_mode,
-        subset_size=100,
-        random_seed=42
+        subset_size=500,
+        random_seed=123
     )
 
     # Print summary
