@@ -179,12 +179,12 @@ This tracker is a required, evolving log for project state and near-term executi
 - WP-08 status: `done and accepted — 7 root files migrated into package, ~25 import sites updated. Only pipeline.py remains at root.`
 - WP-09 status: `done and accepted`
 - WP-10 status: `done and accepted`
-- WP-11 status: `planned — faithfulness metric decomposition. Split faithfulness.py (929L) into faithfulness.py (orchestrator+shared infra) + pixel_flipping.py + faithfulness_correlation.py. Compress saco.py (780L). See WP-11 Concrete Plan.`
-- What happened most recently: `WP-10 integrated and tagged accepted/wp-10. Analysed faithfulness.py (929L), saco.py (780L), sweep.py (500L) for compression opportunities. Decided on WP-11: split faithfulness metrics into focused files + shared perturbation infra, compress saco.py. Sweep deferred to later WP.`
-- Reviewer decision: `WP-10 accepted. WP-11 plan approved for execution.`
-- What should happen next: `execute WP-11 (faithfulness metric decomposition).`
-- Immediate next task (concrete): `WP-11: split faithfulness.py into faithfulness.py (shared infra + orchestration, ~300L) + pixel_flipping.py (~100L) + faithfulness_correlation.py (~120L). Compress saco.py (~500L). Deduplicate shared perturbation helpers.`
-- Immediate validation for that task: `all tests pass, no behavior changes, total LOC reduced from ~1710 to ~1020.`
+- WP-11 status: `done — faithfulness metric decomposition. faithfulness.py (929→401L shared infra + orchestration) + pixel_flipping.py (90L) + faithfulness_correlation.py (112L). saco.py compressed (780→429L). Total: 1709→1032L (40% reduction).`
+- What happened most recently: `WP-11 executed. Split PatchPixelFlipping and FaithfulnessCorrelation into own modules. Rewrote faithfulness.py as shared perturbation infra (create_patch_mask, apply_baseline_perturbation, predict_on_batch, normalize_patch_attribution) + orchestration. Compressed saco.py by removing 3 dataclasses, deduplicating patch mask creation via shared infra, inlining single-use functions.`
+- Reviewer decision: `pending WP-11 review.`
+- What should happen next: `integrate WP-11, tag accepted/wp-11.`
+- Immediate next task (concrete): `push WP-11 branch, integrate into feature/team-research-restructure-plan, tag accepted/wp-11.`
+- Immediate validation for that task: `all 14 tests pass on integration branch.`
 - Known blockers/risks now: `none`
 - Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ in a future WP.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
@@ -486,6 +486,7 @@ Hard constraints:
 - **WP-08 (structural move of root files)**: Migrated 7 root files into package: `dataset_config.py`→`data/dataset_config.py`, `unified_dataloader.py`→`data/dataloader.py` (renamed), `io_utils.py`→`data/io_utils.py`, `setup.py`→`data/setup.py`, `clip_classifier.py`→`models/clip_classifier.py`, `faithfulness.py`→`experiments/faithfulness.py`, `saco.py`→`experiments/saco.py`. Updated ~25 import sites across `src/gradcamfaith/`, `pipeline.py`, and `tests/`. Updated `data/__init__.py` to re-export from new `dataset_config` location. Only `pipeline.py` remains at root. All 14 tests pass.
 - **WP-09 (cleanup and consolidation)**: Removed 14 dead re-exports from `data/setup.py` — kept only imports actually used by `main()` plus `convert_dataset` (used by `pipeline.py`). Promoted conditional `get_dataset_config` imports to top-level in `experiments/saco.py` and removed redundant inline import in `experiments/faithfulness.py`. Updated `pip install` hint to `uv add` in `data/setup.py`. All 14 tests pass.
 - **WP-10 (pipeline breakup)**: Decomposed root `pipeline.py` (436 lines) into focused package modules. Created `experiments/pipeline.py` (orchestrator: `run_unified_pipeline`), `experiments/classify.py` (per-image: `save_attribution_bundle_to_files`, `classify_explain_single_image`). Added `extract_saco_summary` to `experiments/saco.py` (extracted from inline SaCo result extraction). Moved `prepare_dataset_if_needed` to `data/setup.py`. Deleted dead code: `classify_single_image` (never called), line 271 dead expression (ternary result never assigned), re-exports of `load_model_for_dataset`/`load_steering_resources` (callers now import directly). Replaced `models/__init__.py` lazy `__getattr__` with clean eager re-exports — resolves circular dependency `pipeline → models.load → models/__init__ → pipeline`. Updated 4 consumer import sites: `experiments/sweep.py`, `experiments/sae_train.py`, `experiments/case_studies.py`, `tests/test_smoke_contracts.py`. Updated `test_attribution_boundary_contracts.py` to check `experiments/classify.py` instead of root `pipeline`. Root `pipeline.py` deleted. Zero root `.py` files remain. All 14 tests pass. Known future cleanup: debug accumulation block (~90 lines) in `experiments/pipeline.py` — extract into helper when debug mode evolves.
+- **WP-11 (faithfulness metric decomposition)**: Split `faithfulness.py` (929L) into 3 files: `faithfulness.py` (401L, shared perturbation infra + orchestration + reporting), `pixel_flipping.py` (90L, `PatchPixelFlipping` class), `faithfulness_correlation.py` (112L, `FaithfulnessCorrelation` class). Compressed `saco.py` (780→429L): removed 3 dataclasses (`ImageData`, `BinnedPerturbationData`, `BinImpactResult`), replaced with tuple returns; deduplicated `create_spatial_mask_for_bin` by importing shared `create_patch_mask` from faithfulness.py; inlined single-use functions (`analyze_key_attribution_patterns`, `run_binned_saco_analysis`); made `_analyze_faithfulness_vs_correctness` private. Shared perturbation infra: `create_patch_mask` (returns numpy H,W mask), `apply_baseline_perturbation` (handles broadcasting), `predict_on_batch`, `normalize_patch_attribution`. Factory functions absorbed into class `__init__`. Total LOC: 1709→1032 (40% reduction). All 14 tests pass.
 
 ## Tooling and Commands
 Preferred command style:
@@ -826,10 +827,8 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Create branch `wp/WP-11-faithfulness-decomposition` from integration HEAD.
-2. Execute WP-11: split faithfulness.py, create pixel_flipping.py + faithfulness_correlation.py, compress saco.py.
-3. Verify all tests pass, no behavior changes. Integrate, tag `accepted/wp-11`.
-4. Assess next priorities with maintainer:
+1. Integrate WP-11, tag `accepted/wp-11`.
+2. Assess next priorities with maintainer:
    - Sweep compression (resource lifecycle extraction to `models/`, deferred from WP-06D).
    - `case_studies.py` and `comparison.py` compression.
    - Debug accumulation cleanup in `experiments/pipeline.py` (~90 lines).
