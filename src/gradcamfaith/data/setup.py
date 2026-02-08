@@ -12,6 +12,35 @@ from gradcamfaith.data.download import (
 from gradcamfaith.data.prepare import convert_dataset, print_summary  # noqa: F401
 
 
+def prepare_dataset_if_needed(
+    dataset_name: str, source_path: Path, prepared_path: Path, force_prepare: bool = False, **converter_kwargs
+) -> Path:
+    """
+    Prepare dataset if not already prepared.
+
+    Args:
+        dataset_name: Name of the dataset
+        source_path: Path to raw dataset
+        prepared_path: Path where prepared dataset should be
+        force_prepare: If True, force re-preparation even if exists
+        **converter_kwargs: Additional arguments for converter
+
+    Returns:
+        Path to prepared dataset
+    """
+    metadata_file = prepared_path / "dataset_metadata.json"
+
+    if not force_prepare and metadata_file.exists():
+        print(f"Dataset already prepared at {prepared_path}")
+        return prepared_path
+
+    print(f"Preparing {dataset_name} dataset...")
+    print("Images will be preprocessed to 224x224")
+    convert_dataset(dataset_name=dataset_name, source_path=source_path, output_path=prepared_path, **converter_kwargs)
+
+    return prepared_path
+
+
 def main():
     """Main function to orchestrate all downloads."""
     data_dir, models_dir = Path("./data"), Path("./models")

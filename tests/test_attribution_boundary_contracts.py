@@ -38,11 +38,11 @@ def test_compute_attribution_output_contract():
 
 
 def test_pipeline_uses_compute_attribution():
-    """pipeline.py imports compute_attribution, not legacy entrypoints."""
+    """experiments/classify.py imports compute_attribution, not legacy entrypoints."""
     import importlib
     import ast
 
-    spec = importlib.util.find_spec("pipeline")
+    spec = importlib.util.find_spec("gradcamfaith.experiments.classify")
     assert spec is not None and spec.origin is not None
 
     source = open(spec.origin).read()

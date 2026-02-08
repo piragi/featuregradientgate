@@ -1,8 +1,8 @@
 """
-Unified Pipeline Module
+Unified Pipeline — experiment orchestrator.
 
-This is the updated pipeline that uses the unified dataloader system.
-It can work with any dataset that has been converted to the standard format.
+Prepares data, loops over images, accumulates debug info, saves CSV results,
+runs faithfulness evaluation, and runs SaCo attribution analysis.
 """
 
 import logging
@@ -13,202 +13,18 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+from gradcamfaith.core.config import PipelineConfig
+from gradcamfaith.core.types import ClassificationResult
+from gradcamfaith.data import io_utils
+from gradcamfaith.data.dataloader import create_dataloader
+from gradcamfaith.data.dataset_config import get_dataset_config
+from gradcamfaith.data.setup import prepare_dataset_if_needed
+from gradcamfaith.experiments.classify import classify_explain_single_image
+from gradcamfaith.experiments.faithfulness import evaluate_and_report_faithfulness
+from gradcamfaith.experiments.saco import extract_saco_summary, run_binned_attribution_analysis
+
 # Suppress PIL debug logging
 logging.getLogger('PIL').setLevel(logging.WARNING)
-
-from gradcamfaith.data import io_utils
-from gradcamfaith.core.config import FileConfig, PipelineConfig
-from gradcamfaith.core.types import (AttributionDataBundle, AttributionOutputPaths, ClassificationPrediction, ClassificationResult)
-from gradcamfaith.data.dataset_config import DatasetConfig, get_dataset_config
-from gradcamfaith.experiments.faithfulness import evaluate_and_report_faithfulness
-from gradcamfaith.experiments.saco import run_binned_attribution_analysis
-from gradcamfaith.data.setup import convert_dataset
-from gradcamfaith.core.attribution import compute_attribution
-from gradcamfaith.data.dataloader import create_dataloader, get_single_image_loader
-
-# Compatibility re-exports — canonical source is now in gradcamfaith.models.*
-from gradcamfaith.models.load import load_model_for_dataset  # noqa: F401
-from gradcamfaith.models.sae_resources import load_steering_resources  # noqa: F401
-
-
-def prepare_dataset_if_needed(
-    dataset_name: str, source_path: Path, prepared_path: Path, force_prepare: bool = False, **converter_kwargs
-) -> Path:
-    """
-    Prepare dataset if not already prepared.
-
-    Args:
-        dataset_name: Name of the dataset
-        source_path: Path to raw dataset
-        prepared_path: Path where prepared dataset should be
-        force_prepare: If True, force re-preparation even if exists
-        **converter_kwargs: Additional arguments for converter
-
-    Returns:
-        Path to prepared dataset
-    """
-    metadata_file = prepared_path / "dataset_metadata.json"
-
-    if not force_prepare and metadata_file.exists():
-        print(f"Dataset already prepared at {prepared_path}")
-        return prepared_path
-
-    print(f"Preparing {dataset_name} dataset...")
-    print("Images will be preprocessed to 224x224")
-    convert_dataset(dataset_name=dataset_name, source_path=source_path, output_path=prepared_path, **converter_kwargs)
-
-    return prepared_path
-
-
-def classify_single_image(
-    config: PipelineConfig,
-    dataset_config: DatasetConfig,
-    image_path: Path,
-    model: torch.nn.Module,
-    device: torch.device,
-    true_label: Optional[str] = None
-) -> ClassificationResult:
-    """
-    Classify a single image using the unified system.
-    """
-    cache_path = io_utils.build_cache_path(config.file.cache_dir, image_path, f"_classification_{dataset_config.name}")
-
-    # Try to load from cache
-    loaded_result = io_utils.try_load_from_cache(cache_path)
-    if config.file.use_cached_perturbed and loaded_result:
-        return loaded_result
-
-    # Load and preprocess image
-    # Check if we're using CLIP (config might be None in some cases)
-    use_clip = config and config.classify.use_clip
-    input_tensor = get_single_image_loader(image_path, dataset_config, use_clip=use_clip)
-    input_tensor = input_tensor.to(device)
-
-    # Get prediction
-    with torch.no_grad():
-        logits = model(input_tensor)
-        probabilities = torch.softmax(logits, dim=-1)
-        predicted_idx = int(torch.argmax(probabilities, dim=-1).item())
-
-    current_prediction = ClassificationPrediction(
-        predicted_class_label=dataset_config.idx_to_class[predicted_idx],
-        predicted_class_idx=predicted_idx,
-        confidence=float(probabilities[0, predicted_idx].item()),
-        probabilities=probabilities[0].tolist()
-    )
-
-    result = ClassificationResult(
-        image_path=image_path, prediction=current_prediction, true_label=true_label, attribution_paths=None
-    )
-
-    # Cache the result
-    io_utils.save_to_cache(cache_path, result)
-
-    return result
-
-
-def save_attribution_bundle_to_files(
-    image_stem: str, attribution_bundle: AttributionDataBundle, file_config: FileConfig
-) -> AttributionOutputPaths:
-    """Save attribution bundle contents to .npy files."""
-
-    # Ensure attribution directory exists
-    io_utils.ensure_directories([file_config.attribution_dir])
-
-    attribution_path = file_config.attribution_dir / f"{image_stem}_attribution.npy"
-    raw_attribution_path = file_config.attribution_dir / f"{image_stem}_raw_attribution.npy"
-
-    # Save positive attribution
-    np.save(attribution_path, attribution_bundle.positive_attribution)
-    # Save raw attribution
-    np.save(raw_attribution_path, attribution_bundle.raw_attribution)
-
-    return AttributionOutputPaths(
-        attribution_path=attribution_path,
-        raw_attribution_path=raw_attribution_path,
-    )
-
-
-def classify_explain_single_image(
-    config: PipelineConfig,
-    dataset_config: DatasetConfig,
-    image_path: Path,
-    model: torch.nn.Module,
-    device: torch.device,
-    steering_resources: Optional[Dict[int, Dict[str, Any]]],
-    true_label: Optional[str] = None,
-    clip_classifier: Optional[Any] = None,  # Pre-created CLIP classifier
-) -> Tuple[ClassificationResult, Dict[int, Dict[str, Any]]]:
-    """
-    Classify a single image AND generate explanations using unified system.
-    Returns classification result and debug info (if debug mode is enabled).
-    """
-    cache_path = io_utils.build_cache_path(
-        config.file.cache_dir, image_path, f"_classification_explained_{dataset_config.name}"
-    )
-
-    # Try to load from cache
-    loaded_result = io_utils.try_load_from_cache(cache_path)
-    if config.file.use_cached_original and loaded_result:
-        if loaded_result.attribution_paths is not None:
-            return loaded_result, {}  # No debug info from cache
-
-    # Load and preprocess image
-    # Check if we're using CLIP (config might be None in some cases)
-    use_clip = config and config.classify.use_clip
-    input_tensor = get_single_image_loader(image_path, dataset_config, use_clip=use_clip)
-    input_tensor = input_tensor.to(device)
-
-    raw_attribution_result_dict = compute_attribution(
-        model_prisma=model,
-        input_tensor=input_tensor,
-        config=config,
-        idx_to_class=dataset_config.idx_to_class,  # Pass dataset-specific class mapping
-        device=device,
-        steering_resources=steering_resources,
-        enable_feature_gradients=config.classify.boosting.enable_feature_gradients,
-        feature_gradient_layers=config.classify.boosting.feature_gradient_layers
-        if config.classify.boosting.enable_feature_gradients else [],
-        clip_classifier=clip_classifier,
-        debug=getattr(config.classify.boosting, 'debug_mode', False),
-    )
-
-    # Extract raw attribution and debug info
-    raw_attr = raw_attribution_result_dict.get("raw_attribution", np.array([]))
-    debug_info = raw_attribution_result_dict.get("debug_info", {})
-
-    # Create prediction
-    prediction_data = raw_attribution_result_dict["predictions"]
-    current_prediction = ClassificationPrediction(
-        predicted_class_label=dataset_config.idx_to_class[prediction_data["predicted_class_idx"]],
-        predicted_class_idx=prediction_data["predicted_class_idx"],
-        confidence=float(prediction_data["probabilities"][prediction_data["predicted_class_idx"]]),
-        probabilities=prediction_data["probabilities"]
-    )
-
-    # Create attribution bundle
-    attribution_bundle = AttributionDataBundle(
-        positive_attribution=raw_attribution_result_dict["attribution_positive"],
-        raw_attribution=raw_attr,
-    )
-
-    # Save attribution bundle
-    saved_attribution_paths = save_attribution_bundle_to_files(image_path.stem, attribution_bundle, config.file)
-
-    # Create final result with cached tensors for efficient faithfulness evaluation
-    final_result = ClassificationResult(
-        image_path=image_path,
-        prediction=current_prediction,
-        true_label=true_label,
-        attribution_paths=saved_attribution_paths,
-        _cached_tensor=input_tensor.cpu().numpy()[0],  # Cache preprocessed tensor (C, H, W)
-        _cached_raw_attribution=raw_attr  # Cache raw attribution
-    )
-
-    # Cache the result
-    io_utils.save_to_cache(cache_path, final_result)
-
-    return final_result, debug_info
 
 
 def run_unified_pipeline(
@@ -267,8 +83,6 @@ def run_unified_pipeline(
 
     # Create dataloader
     print(f"Creating dataloader from {prepared_path}")
-    # Check if we're using CLIP for this dataset
-    config.classify.use_clip if hasattr(config.classify, 'use_clip') else False
     dataset_loader = create_dataloader(dataset_name=dataset_name, data_path=prepared_path)
 
     # Use pre-loaded model and steering resources
@@ -412,23 +226,8 @@ def run_unified_pipeline(
     print("Running SaCo attribution analysis...")
     saco_analysis = run_binned_attribution_analysis(config, model_for_analysis, results, device)
 
-    # Extract SaCo scores (overall and per-class)
-    saco_results = {}
-    if saco_analysis and "faithfulness_correctness" in saco_analysis:
-        fc_df = saco_analysis["faithfulness_correctness"]
-
-        # Overall statistics
-        saco_results['mean'] = fc_df["saco_score"].mean()
-        saco_results['std'] = fc_df["saco_score"].std()
-        saco_results['n_samples'] = len(fc_df)
-
-        # Per-class breakdown
-        per_class_stats = fc_df.groupby('true_class')['saco_score'].agg(['mean', 'std', 'count'])
-        saco_results['per_class'] = per_class_stats.to_dict('index')
-
-        # Also include correctness breakdown
-        correctness_stats = fc_df.groupby('is_correct')['saco_score'].agg(['mean', 'std', 'count'])
-        saco_results['by_correctness'] = correctness_stats.to_dict('index')
+    # Extract SaCo summary statistics
+    saco_results = extract_saco_summary(saco_analysis)
 
     print("\nPipeline complete!")
 

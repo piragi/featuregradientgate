@@ -28,7 +28,9 @@ import torch
 
 import gradcamfaith.core.config as config
 from gradcamfaith.data.dataset_config import get_dataset_config
-from pipeline import (load_model_for_dataset, load_steering_resources, run_unified_pipeline)
+from gradcamfaith.experiments.pipeline import run_unified_pipeline
+from gradcamfaith.models.load import load_model_for_dataset
+from gradcamfaith.models.sae_resources import load_steering_resources
 
 
 # ---------------------------------------------------------------------------
