@@ -174,15 +174,37 @@ This tracker is a required, evolving log for project state and near-term executi
 
 - Program branch: `feature/team-research-restructure-plan`
 - Branching mode: `slice branches + immediate integration + accepted checkpoint tags`
-- Last successful commit reflected here: `golden-value regression test added to feature/team-research-restructure-plan`
+- Last successful commit reflected here: `golden-value regression test + WP-06B integration on feature/team-research-restructure-plan`
 - Last accepted integration checkpoint: `accepted/wp-06b`
-- What happened most recently: `Added golden-value regression test (test_imagenet_golden_faithfulness_values) for imagenet val subset=500/seed=123/combined/layer3. Catches silent pipeline behavior changes.`
+- WP-06B status: `done and accepted — compute_attribution canonical, legacy deprecated, boundary tests + golden-value regression test in place`
+- What happened most recently: `WP-06B-R3 accepted and integrated. Golden-value regression test added and verified passing.`
 - Reviewer decision: `accepted`
 - What should happen next: `create wp/WP-06C-gating-boundary-refactor from integration HEAD and execute gating refactor.`
-- Immediate next task (concrete): `WP-06C: split compute_feature_gradient_gate into focused internal helpers (score construction, gate mapping, debug packaging) in core/gating.py. Preserve public signatures.`
-- Immediate validation for that task: `public signature checks unchanged, import smokes pass, fixed-seed synthetic equivalence max_diff == 0.0 for gate outputs.`
+- Immediate next task (concrete): `WP-06C: refactor core/gating.py for readability without changing behavior. See concrete steps below.`
+- Immediate validation for that task: `import smokes pass, fixed-seed synthetic equivalence max_diff == 0.0 for gate outputs, all existing tests pass (smoke + boundary + golden-value).`
 - Known blockers/risks now: `none`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
+
+### WP-06C Concrete Plan (`core/gating.py`)
+
+Current state: two public functions in `core/gating.py`:
+- `compute_feature_gradient_gate` (134 lines) — computes per-patch gating multipliers
+- `apply_feature_gradient_gating` (98 lines) — applies gate to attention CAM
+
+Problems:
+- `compute_feature_gradient_gate` mixes three concerns: score construction (4 branches), normalization+mapping, and debug collection (30+ lines of sparse feature extraction)
+- `apply_feature_gradient_gating` mixes config unpacking, decoder extraction, CAM application logic, and debug packaging
+
+Planned extractions (one commit):
+1. **`_compute_patch_scores(gate_construction, sae_codes, feature_grads, residual_grad, residual)`** — dispatch the 4 gate construction branches (`combined`, `activation_only`, `gradient_only`, `no_SAE`), return `(s_t, contributions)`. Replaces lines 62–81.
+2. **`_collect_gate_debug_info(gate, s_t, contributions, sae_codes, feature_grads, gate_construction, active_feature_threshold)`** — extract the debug block (lines 94–133) including sparse feature collection loop. Return debug dict.
+3. **`_extract_decoder(sae)`** — extract decoder matrix from SAE (lines 177–182 of `apply_feature_gradient_gating`), centralizing the `W_dec`/`decoder.weight` dispatch.
+
+Hard constraints:
+- No algorithm/metric behavior changes — same gate values, same CAM output for identical inputs.
+- Signatures may change freely (tests exist to catch breakage at call sites).
+- Numeric equivalence: max_diff == 0.0 on fixed-seed synthetic inputs.
+- All existing tests must pass (smoke, boundary contracts, golden-value integration).
 
 ### Decision Log
 - **WP-01**: Added `[build-system]` (hatchling) and `[tool.hatch.build.targets.wheel]` to pyproject.toml to make `src/gradcamfaith` an installable package. This is required for absolute imports (`from gradcamfaith.core.config import ...`) to work. `uv sync` installs the package in dev mode automatically.
