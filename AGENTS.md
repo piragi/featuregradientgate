@@ -179,13 +179,14 @@ This tracker is a required, evolving log for project state and near-term executi
 - WP-08 status: `done and accepted — 7 root files migrated into package, ~25 import sites updated. Only pipeline.py remains at root.`
 - WP-09 status: `done and accepted`
 - WP-10 status: `done and accepted`
-- WP-11 status: `done — faithfulness metric decomposition. faithfulness.py (929→401L shared infra + orchestration) + pixel_flipping.py (90L) + faithfulness_correlation.py (112L). saco.py compressed (780→429L). Total: 1709→1032L (40% reduction).`
-- What happened most recently: `WP-11 executed. Split PatchPixelFlipping and FaithfulnessCorrelation into own modules. Rewrote faithfulness.py as shared perturbation infra (create_patch_mask, apply_baseline_perturbation, predict_on_batch, normalize_patch_attribution) + orchestration. Compressed saco.py by removing 3 dataclasses, deduplicating patch mask creation via shared infra, inlining single-use functions.`
-- Reviewer decision: `pending WP-11 review.`
-- What should happen next: `integrate WP-11, tag accepted/wp-11.`
-- Immediate next task (concrete): `push WP-11 branch, integrate into feature/team-research-restructure-plan, tag accepted/wp-11.`
-- Immediate validation for that task: `all 14 tests pass on integration branch.`
-- Known blockers/risks now: `none`
+- WP-11 status: `done and accepted`
+- WP-12 status: `planned — SaCo simplification. Clarify core algorithm, unify perturbation with shared infra, remove dead fields, separate reporting from computation. See WP-12 Concrete Plan.`
+- What happened most recently: `WP-11 integrated and tagged accepted/wp-11. Reviewed saco.py (429L) for further simplification. Core SaCo algorithm is obscured by dense matrix math, PIL perturbation round-trip, unused fields (bin_bias, class_changed, probabilities), and reporting code mixed into computation.`
+- Reviewer decision: `WP-11 accepted. WP-12 plan approved for execution.`
+- What should happen next: `execute WP-12 (SaCo simplification).`
+- Immediate next task (concrete): `WP-12: simplify calculate_saco_vectorized, switch perturbation to shared apply_baseline_perturbation, remove dead fields, separate reporting from core algorithm. Target: ~250L.`
+- Immediate validation for that task: `all tests pass. SaCo scores may differ slightly due to perturbation path change (tensor-level mean vs PIL-level mean), but metric semantics are preserved.`
+- Known blockers/risks now: `perturbation path change (PIL→tensor) will cause minor numerical differences in SaCo scores. Acceptable per maintainer decision.`
 - Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ in a future WP.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
 
@@ -438,6 +439,169 @@ Hard constraints:
 - No behavior changes — same metrics, same outputs, same file formats.
 - Public entry points unchanged: `evaluate_and_report_faithfulness` (faithfulness.py), `run_binned_attribution_analysis` (saco.py).
 - `experiments/pipeline.py` imports are not affected.
+
+### WP-12 Concrete Plan (SaCo Simplification)
+
+Goal: Make saco.py readable and concise. The core idea is simple — bin patches by attribution, perturb each bin, check that higher-attribution bins cause bigger confidence drops — but the current code obscures this with dense matrix math, a PIL perturbation round-trip, unused fields, and reporting mixed into computation. Target: ~250L down from 429L.
+
+**Accepted behavior change:** Switching from PIL-based perturbation (perturb original image → retransform) to tensor-level perturbation (perturb already-transformed tensor via shared `apply_baseline_perturbation`) will cause minor numerical differences in SaCo scores. The metric semantics are identical (mean-value replacement on masked patches). This is approved by the maintainer.
+
+#### Step 1: Simplify `calculate_saco_vectorized_with_bias` → `calculate_saco`
+
+Current code (lines 60-86) uses dense matrix operations with unclear variable names (`violation_weights`, `is_faithful`, `weights`, `weights_upper`). The bias computation is unused downstream.
+
+**Rewrite to:**
+```python
+def calculate_saco(attributions, confidence_drops):
+    """Pairwise concordance: do higher-attribution bins cause bigger drops?
+
+    For each pair (i, j) where attr[i] > attr[j], check if drop[i] > drop[j].
+    SaCo = (concordant_pairs - discordant_pairs) / total_pairs.
+    """
+    n = len(attributions)
+    if n < 2:
+        return 0.0
+    concordant = discordant = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            attr_diff = attributions[i] - attributions[j]
+            drop_diff = confidence_drops[i] - confidence_drops[j]
+            if attr_diff * drop_diff > 0:
+                concordant += abs(attr_diff)
+            elif attr_diff * drop_diff < 0:
+                discordant += abs(attr_diff)
+    total = concordant + discordant
+    return (concordant - discordant) / total if total > 0 else 0.0
+```
+
+Changes:
+- Remove `bin_bias` computation entirely (never used downstream).
+- Rename to `calculate_saco` (no `_vectorized_with_bias` — it's neither vectorized in the useful sense nor returning bias anymore).
+- Rename `confidence_impacts` → `confidence_drops` for clarity.
+- Keep the weighted formulation (weighted by `abs(attr_diff)`) to match current behavior exactly.
+- Simple loop is clearer than the matrix approach for 20 bins (20×20 = 400 comparisons — trivial).
+
+#### Step 2: Unify perturbation path — delete `apply_binned_perturbation`
+
+Current `apply_binned_perturbation` (lines 142-177) does:
+1. Compute PIL image mean intensity
+2. Create a gray PIL layer
+3. Convert numpy mask to PIL mask, paste gray, get composite PIL image
+4. Re-run dataset-specific transforms to get a tensor
+
+Replace with shared `apply_baseline_perturbation` from `faithfulness.py` which does:
+1. `np.where(mask, image.mean(), image)` on the already-transformed `(C, H, W)` numpy array
+
+This means `create_binned_perturbations` takes the cached tensor (`_cached_tensor`) instead of a PIL image. The PIL image open, `ImageStat`, and `get_dataset_config` transform pipeline are all deleted.
+
+**Concrete changes:**
+- Delete `apply_binned_perturbation` function entirely.
+- Delete `from PIL import Image, ImageStat` (PIL no longer needed).
+- Delete `from gradcamfaith.data.dataset_config import get_dataset_config` (no longer needed for transforms).
+- `create_binned_perturbations` signature changes: takes `image_tensor` (numpy C,H,W) instead of `pil_image` + `dataset_name` + `perturbation_method`. Uses `apply_baseline_perturbation(image_tensor, mask, "mean")` from faithfulness.py and wraps result with `torch.from_numpy(...).float()`.
+- `load_image_and_attributions` returns `(cached_tensor, raw_attributions, confidence, class_idx)` instead of `(pil_image, ...)`. Uses `_cached_tensor` (already available). Falls back to opening+transforming only if no cache.
+- `calculate_binned_saco_for_image` updated to pass tensor through the new flow.
+
+#### Step 3: Simplify `batched_model_inference`
+
+Current version (lines 37-53) returns full prediction dicts with `probabilities` tensor, `predicted_class_idx`, and `confidence`. But callers only need `confidence` and `predicted_class_idx`.
+
+**Rewrite to:**
+```python
+def _classify_batch(model, batch_tensor, device):
+    """Run inference, return list of (predicted_class_idx, confidence)."""
+    model.eval()
+    with torch.no_grad():
+        logits = model(batch_tensor.to(device))
+        probs = torch.softmax(logits, dim=1)
+        idxs = torch.argmax(probs, dim=1)
+        confs = probs[torch.arange(len(idxs)), idxs]
+    return list(zip(idxs.cpu().tolist(), confs.cpu().tolist()))
+```
+
+Changes:
+- Rename to `_classify_batch` (private, descriptive).
+- Return tuples instead of dicts — callers destructure directly.
+- Remove `batch_size` parameter — all current callers pass the full batch at once (`batch_size=len(batch_tensor)`). The outer batching loop was dead code.
+- Remove `probabilities` from return (never used).
+
+#### Step 4: Simplify `measure_bin_impacts`
+
+Current version (lines 221-241) builds result dicts with 7 fields including `bin_attribution_bias` (added later by `compute_saco_from_impacts`), `class_changed` (never read), and `confidence_delta_abs` (never read).
+
+**Rewrite to return parallel arrays:**
+```python
+def _measure_bin_drops(bins, perturbed_tensors, original_confidence, model, device):
+    """Measure confidence drop when each bin is perturbed. Returns numpy array of drops."""
+    batch = torch.stack(perturbed_tensors)
+    preds = _classify_batch(model, batch, device)
+    return np.array([original_confidence - conf for _, conf in preds])
+```
+
+This replaces `measure_bin_impacts` + `compute_saco_from_impacts` chain. The SaCo computation becomes:
+```python
+attributions = np.array([b.mean_attribution for b in bins])
+drops = _measure_bin_drops(bins, perturbed_tensors, confidence, model, device)
+saco_score = calculate_saco(attributions, drops)
+```
+
+#### Step 5: Remove dead fields and simplify data flow
+
+| Dead field/code | Where | Action |
+|---|---|---|
+| `bin_attribution_bias` | `compute_saco_from_impacts` → bin result dicts | Delete (never read by any consumer) |
+| `class_changed` | `measure_bin_impacts` result dicts | Delete (never read) |
+| `confidence_delta_abs` | `measure_bin_impacts` result dicts | Delete (never read) |
+| `probabilities` in `batched_model_inference` return | Return dicts | Delete (never read) |
+| `probabilities` in `_analyze_faithfulness_vs_correctness` | DataFrame column | Delete (never read) |
+| `compute_saco_from_impacts` function | Standalone function | Delete — inline 3-line SaCo call into `calculate_binned_saco_for_image` |
+| `measure_bin_impacts` function | Standalone function | Replace with `_measure_bin_drops` (simpler return type) |
+| `debug` parameter on `calculate_binned_saco_for_image` | Function signature | Delete (single print statement, never passed as True from any caller) |
+
+#### Step 6: Simplify reporting in `run_binned_attribution_analysis`
+
+Current reporting block (lines 348-391) mixes post-hoc analysis, summary printing, and file I/O into one function. The "attribution patterns" concept is just "correct predictions with SaCo scores" — a one-line DataFrame filter, not worth naming.
+
+**Simplify to:**
+- `_get_or_compute_binned_results` returns `(saco_scores_by_image: dict, bin_results_df: DataFrame)` — the DataFrame for CSV saving, the dict for downstream use.
+- `_analyze_faithfulness_vs_correctness` stays but drops `probabilities` column.
+- The "attribution patterns" block (lines 361-366) deletes entirely — it's a filtered view that's saved as CSV but never used programmatically.
+- The double-save of `bin_results` (lines 381-388 save it once as `{ds_name}_bin_results.csv` and once as `analysis_bin_results_binned_{timestamp}.csv`) reduces to a single save.
+
+#### Step 7: Keep `BinInfo` and `extract_saco_summary` unchanged
+
+- `BinInfo` dataclass has 7 meaningful fields and clear semantics — keep.
+- `extract_saco_summary` is the public API used by `experiments/pipeline.py` — keep unchanged.
+
+#### Expected result
+
+| Item | Before (429L) | After (~250L) |
+|---|---|---|
+| Core algorithm (`calculate_saco`) | 27L dense matrix | ~15L clear loop |
+| Perturbation (`apply_binned_perturbation`) | 36L PIL round-trip | 0L (deleted, uses shared `apply_baseline_perturbation`) |
+| Model inference (`batched_model_inference`) | 17L returning dicts | ~8L returning tuples |
+| Per-bin measurement | 21L + 16L (two functions) | ~5L (one helper) |
+| Per-image pipeline | 25L | ~20L |
+| Dataset-level analysis | 70L | ~50L |
+| Post-hoc / reporting | 50L | ~30L |
+| Binning | 43L | 43L (unchanged) |
+| `extract_saco_summary` | 15L | 15L (unchanged) |
+| **Total** | **429L** | **~250L** |
+
+#### Import changes
+
+- Add: `from gradcamfaith.experiments.faithfulness import apply_baseline_perturbation` (in addition to existing `create_patch_mask`)
+- Delete: `from PIL import Image, ImageStat`
+- Delete: `from gradcamfaith.data.dataset_config import get_dataset_config`
+- Keep: `from gradcamfaith.core.types import ClassificationResult` (used for type context)
+
+#### Hard constraints
+
+- All tests pass.
+- Public entry points unchanged: `run_binned_attribution_analysis(config, vit_model, original_results, device, n_bins)`, `extract_saco_summary(saco_analysis)`.
+- `experiments/pipeline.py` imports not affected.
+- CSV output format may lose columns (`class_changed`, `confidence_delta_abs`, `bin_attribution_bias`) — these are unused analysis artifacts.
+- SaCo score values will differ slightly from pre-WP-12 due to perturbation path change. This is accepted.
 
 ### Decision Log
 - **WP-01**: Added `[build-system]` (hatchling) and `[tool.hatch.build.targets.wheel]` to pyproject.toml to make `src/gradcamfaith` an installable package. This is required for absolute imports (`from gradcamfaith.core.config import ...`) to work. `uv sync` installs the package in dev mode automatically.
@@ -827,8 +991,10 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Integrate WP-11, tag `accepted/wp-11`.
-2. Assess next priorities with maintainer:
+1. Create branch `wp/WP-12-saco-simplification` from integration HEAD.
+2. Execute WP-12: simplify SaCo core algorithm, unify perturbation, remove dead fields, clean up reporting.
+3. Verify all tests pass. Integrate, tag `accepted/wp-12`.
+4. Assess next priorities with maintainer:
    - Sweep compression (resource lifecycle extraction to `models/`, deferred from WP-06D).
    - `case_studies.py` and `comparison.py` compression.
    - Debug accumulation cleanup in `experiments/pipeline.py` (~90 lines).
