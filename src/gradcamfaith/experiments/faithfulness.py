@@ -300,7 +300,6 @@ def _prepare_batch_data(config: PipelineConfig, batch_results: List[Classificati
                 img_array = result._cached_tensor
             else:
                 # Fallback: load and transform (for cached results without tensors)
-                from gradcamfaith.data.dataset_config import get_dataset_config
                 ds_cfg = get_dataset_config(config.file.dataset_name)
                 transform = ds_cfg.get_transforms('test')
                 img = Image.open(result.image_path).convert('RGB')

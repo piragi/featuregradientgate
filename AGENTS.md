@@ -172,18 +172,20 @@ This tracker is a required, evolving log for project state and near-term executi
 
 - Program branch: `feature/team-research-restructure-plan`
 - Branching mode: `slice branches + immediate integration + accepted checkpoint tags`
-- Last successful commit reflected here: `WP-07 on wp/WP-07-legacy-removal, pending integration`
-- Last accepted integration checkpoint: `accepted/wp-06d`
+- Last successful commit reflected here: `WP-09 on wp/WP-09-cleanup-consolidation, pending integration`
+- Last accepted integration checkpoint: `accepted/wp-08`
 - WP-06B status: `done and accepted`
 - WP-06C status: `done and accepted`
 - WP-06D status: `done and accepted`
-- WP-07 status: `done, pending integration — 8 root wrappers deleted, deprecated attribution shims removed, all imports updated to package paths. All 14 tests pass.`
-- What happened most recently: `WP-07: removed 8 root compatibility wrappers, deleted transmm_prisma_enhanced and generate_attribution_prisma_enhanced from attribution.py, updated pipeline.py/faithfulness.py/io_utils.py/saco.py imports to package paths, rewrote both test files for package-only imports.`
+- WP-07 status: `done and accepted`
+- WP-08 status: `done and accepted — 7 root files migrated into package, ~25 import sites updated. Only pipeline.py remains at root.`
+- WP-09 status: `done, pending integration — dead re-exports removed from setup.py, conditional imports promoted to top-level, data/__init__.py cleaned. All 14 tests pass.`
+- What happened most recently: `WP-09: removed 14 dead re-exports from data/setup.py (keep only main() + used imports), promoted conditional dataset_config imports to top-level in saco.py and faithfulness.py, updated data/__init__.py, fixed pip→uv hint.`
 - Reviewer decision: `pending`
-- What should happen next: `integrate WP-07, then execute WP-08 (structural move of 7 leaf root files into package).`
-- Immediate next task (concrete): `WP-08: move dataset_config, unified_dataloader, io_utils, setup, clip_classifier, faithfulness, saco into their target package locations. Update all imports (~25 sites). Delete root files. pipeline.py stays at root until WP-10.`
-- Immediate validation for that task: `all tests pass with uv run pytest tests/. No root .py files except pipeline.py.`
-- Known blockers/risks now: `dataset_config.py is imported by 10+ files — must move first, then update all consumers atomically.`
+- What should happen next: `integrate WP-09, then execute WP-10 (pipeline decomposition).`
+- Immediate next task (concrete): `WP-10: decompose pipeline.py into experiments/pipeline.py + experiments/classify.py, move prepare_dataset_if_needed to data/setup.py, resolve models/__init__.py circular dependency, delete root pipeline.py.`
+- Immediate validation for that task: `all tests pass. Zero root .py files. models/__init__.py has no __getattr__ hack.`
+- Known blockers/risks now: `none`
 - Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ in a future WP.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
 
@@ -369,6 +371,8 @@ Hard constraints:
 - **Intermediate (golden-value regression test)**: Added `test_imagenet_golden_faithfulness_values` to `tests/test_integration_fresh_env.py`. Full-stack test runs imagenet val split, subset=500, seed=123, combined gate, layer [3], kappa=0.5, clamp_max=10.0 via `run_parameter_sweep`. Asserts exact golden values for SaCo (mean/std), PixelFlipping (count/mean/median), and FaithfulnessCorrelation (count/mean/median). Explicit cleanup via `shutil.rmtree` in `finally` block. Gated behind `GRADCAMFAITH_RUN_FULL_STACK=1` + CUDA.
 - **WP-06D (sweep readability rewrite)**: Extracted 8 helpers from `experiments/sweep.py`: `_gpu_cleanup` (centralized GC/CUDA), `_print_gpu_memory` (GPU memory reporting), `_build_pipeline_config` (PipelineConfig construction), `_build_experiment_grid` (vanilla + gated param grid), `_build_imagenet_clip_prompts` (article-aware CLIP prompts), `_load_dataset_resources` (model/CLIP/SAE loading), `_release_dataset_resources` (teardown), `_summarize_result` (result extraction). Added `SweepConfig` dataclass matching `run_parameter_sweep` parameters 1:1 for `**asdict(cfg)` unpacking. `main()` simplified to config-first pattern. Public signatures unchanged. All 14 tests pass. Deferred: resource lifecycle helpers still in sweep.py — should move to `models/` in WP-07.
 - **WP-07 (legacy removal and thorough refactor)**: Deleted 8 root compatibility wrappers (`main.py`, `transmm.py`, `feature_gradient_gating.py`, `config.py`, `data_types.py`, `comparsion.py`, `analysis_feature_case_studies.py`, `sae.py`). Removed deprecated `transmm_prisma_enhanced` and `generate_attribution_prisma_enhanced` from `core/attribution.py` (along with unused `import warnings` and `HookedSAEViT` import). Updated 4 root files to package imports: `pipeline.py` (`config`→`gradcamfaith.core.config`, `data_types`→`gradcamfaith.core.types`), `faithfulness.py` (same), `io_utils.py` (`data_types`→`gradcamfaith.core.types`), `saco.py` (same). Rewrote `test_smoke_contracts.py` to package-only imports (removed all root wrapper import tests, added `SweepConfig` to import check). Rewrote `test_attribution_boundary_contracts.py` (removed `test_legacy_wrappers_deprecated`, added `test_deprecated_shims_removed`). All 14 tests pass. Resource extraction from sweep.py deferred to future WP.
+- **WP-08 (structural move of root files)**: Migrated 7 root files into package: `dataset_config.py`→`data/dataset_config.py`, `unified_dataloader.py`→`data/dataloader.py` (renamed), `io_utils.py`→`data/io_utils.py`, `setup.py`→`data/setup.py`, `clip_classifier.py`→`models/clip_classifier.py`, `faithfulness.py`→`experiments/faithfulness.py`, `saco.py`→`experiments/saco.py`. Updated ~25 import sites across `src/gradcamfaith/`, `pipeline.py`, and `tests/`. Updated `data/__init__.py` to re-export from new `dataset_config` location. Only `pipeline.py` remains at root. All 14 tests pass.
+- **WP-09 (cleanup and consolidation)**: Removed 14 dead re-exports from `data/setup.py` — kept only imports actually used by `main()` plus `convert_dataset` (used by `pipeline.py`). Promoted conditional `get_dataset_config` imports to top-level in `experiments/saco.py` and removed redundant inline import in `experiments/faithfulness.py`. Updated `pip install` hint to `uv add` in `data/setup.py`. All 14 tests pass.
 
 ## Tooling and Commands
 Preferred command style:

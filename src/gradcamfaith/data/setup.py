@@ -1,30 +1,15 @@
-"""Compatibility wrapper — canonical sources are gradcamfaith.data.download and gradcamfaith.data.prepare"""
+"""Data setup: download orchestration and dataset preparation."""
 import sys
 from pathlib import Path
 
-# Re-export download functions
-from gradcamfaith.data.download import (  # noqa: F401
-    download_with_progress,
-    download_from_gdrive,
-    extract_zip,
-    extract_tar_gz,
+from gradcamfaith.data.download import (
+    download_covidquex,
     download_hyperkvasir,
     download_imagenet,
-    download_covidquex,
-    download_thesis_saes,
     download_sae_checkpoints,
+    download_thesis_saes,
 )
-
-# Re-export prepare/convert functions
-from gradcamfaith.data.prepare import (  # noqa: F401
-    convert_dataset,
-    print_summary,
-    prepare_covidquex,
-    prepare_hyperkvasir,
-    prepare_waterbirds,
-    prepare_imagenet,
-    split_ids,
-)
+from gradcamfaith.data.prepare import convert_dataset, print_summary  # noqa: F401
 
 
 def main():
@@ -37,7 +22,6 @@ def main():
     print("=" * 50)
 
     try:
-        # Download datasets (uncomment as needed)
         download_hyperkvasir(data_dir, models_dir)
         download_covidquex(data_dir, models_dir)
         download_imagenet(data_dir, models_dir)
@@ -59,13 +43,12 @@ def main():
 
 
 if __name__ == "__main__":
-    # Check for required packages
     try:
-        import gdown
-        import requests
-        from huggingface_hub import hf_hub_download
+        import gdown  # noqa: F401
+        import requests  # noqa: F401
+        from huggingface_hub import hf_hub_download  # noqa: F401
     except ImportError:
-        print("Missing required package. Install: pip install gdown requests huggingface-hub")
+        print("Missing required package. Install: uv add gdown requests huggingface-hub")
         sys.exit(1)
 
     main()

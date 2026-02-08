@@ -24,6 +24,7 @@ import torch
 from tqdm import tqdm
 
 from gradcamfaith.core.types import ClassificationResult
+from gradcamfaith.data.dataset_config import get_dataset_config
 
 
 def batched_model_inference(model_instance,
@@ -261,7 +262,6 @@ def apply_binned_perturbation(
             # 5. Preprocess the final perturbed PIL image back to a tensor
             # Use dataset-specific transforms from centralized dataset_config
             if dataset_name:
-                from gradcamfaith.data.dataset_config import get_dataset_config
                 dataset_config = get_dataset_config(dataset_name)
                 # Use test transforms (no augmentations) for perturbation evaluation
                 # The dataset config will handle whether to use CLIP or ViT preprocessing
