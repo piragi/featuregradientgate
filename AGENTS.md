@@ -174,37 +174,54 @@ This tracker is a required, evolving log for project state and near-term executi
 
 - Program branch: `feature/team-research-restructure-plan`
 - Branching mode: `slice branches + immediate integration + accepted checkpoint tags`
-- Last successful commit reflected here: `golden-value regression test + WP-06B integration on feature/team-research-restructure-plan`
-- Last accepted integration checkpoint: `accepted/wp-06b`
-- WP-06B status: `done and accepted — compute_attribution canonical, legacy deprecated, boundary tests + golden-value regression test in place`
-- What happened most recently: `WP-06B-R3 accepted and integrated. Golden-value regression test added and verified passing.`
+- Last successful commit reflected here: `WP-06C accepted and integrated into feature/team-research-restructure-plan`
+- Last accepted integration checkpoint: `accepted/wp-06c`
+- WP-06B status: `done and accepted`
+- WP-06C status: `done and accepted — gating.py refactored into focused helpers (_extract_decoder, _compute_patch_scores, _collect_gate_debug_info, _apply_gate_to_cam). Gate equivalence: max_diff == 0.0.`
+- What happened most recently: `WP-06C accepted: core/gating.py split into 4 private helpers + 2 public functions. Cherry-picked into integration branch, tagged accepted/wp-06c.`
 - Reviewer decision: `accepted`
-- What should happen next: `create wp/WP-06C-gating-boundary-refactor from integration HEAD and execute gating refactor.`
-- Immediate next task (concrete): `WP-06C: refactor core/gating.py for readability without changing behavior. See concrete steps below.`
-- Immediate validation for that task: `import smokes pass, fixed-seed synthetic equivalence max_diff == 0.0 for gate outputs, all existing tests pass (smoke + boundary + golden-value).`
+- What should happen next: `create wp/WP-06D-sweep-readability from integration HEAD and rewrite sweep.py for clarity.`
+- Immediate next task (concrete): `WP-06D: rewrite experiments/sweep.py for readability and separation of concerns. See concrete plan below.`
+- Immediate validation for that task: `all existing tests pass (smoke + boundary + golden-value integration). Import smokes for root and package entrypoints.`
 - Known blockers/risks now: `none`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
 
-### WP-06C Concrete Plan (`core/gating.py`)
+### WP-06D Concrete Plan (`experiments/sweep.py`)
 
-Current state: two public functions in `core/gating.py`:
-- `compute_feature_gradient_gate` (134 lines) — computes per-patch gating multipliers
-- `apply_feature_gradient_gating` (98 lines) — applies gate to attention CAM
+Current state: 492 lines, 3 functions (`run_single_experiment`, `run_parameter_sweep`, `main`).
 
 Problems:
-- `compute_feature_gradient_gate` mixes three concerns: score construction (4 branches), normalization+mapping, and debug collection (30+ lines of sparse feature extraction)
-- `apply_feature_gradient_gating` mixes config unpacking, decoder extraction, CAM application logic, and debug packaging
+1. **`run_single_experiment` (133 lines)** mixes four concerns:
+   - PipelineConfig construction from experiment_params dict (lines 57–87)
+   - ImageNet-specific CLIP setup (lines 69–75) — duplicated in `run_parameter_sweep`
+   - Experiment metadata save (lines 89–100)
+   - Pipeline execution + result save + GPU cleanup (lines 102–152)
+2. **`run_parameter_sweep` (272 lines)** is a monolith that mixes:
+   - Output directory + sweep config save (lines 187–209)
+   - Per-dataset resource loading with ImageNet-specific CLIP prompt construction (lines 213–263) — the prompt logic uses inline helper functions and duplicates the CLIP setup from `run_single_experiment`
+   - Vanilla baseline experiment (lines 267–313)
+   - Gated experiment grid loop via `itertools.product` (lines 315–370)
+   - Per-experiment result summarization + GC (lines 348–370)
+   - Heavy per-dataset cleanup (model/CLIP/SAE to CPU, multi-round GC) (lines 374–416)
+   - Sweep summary save (lines 418–426)
+3. **Duplicated CLIP/ImageNet logic** — both `run_single_experiment` and `run_parameter_sweep` independently configure CLIP settings for ImageNet, with slightly different prompt templates ("a photo of a {cls}" vs article-aware prompts).
+4. **`gc.collect()` / `torch.cuda.empty_cache()` scattered** throughout — cleanup logic appears in 4 different places with varying levels of aggressiveness.
+5. **No clear reading order** — a newcomer can't tell why vanilla runs first, what the parameter grid means, or how results are structured without reading the whole function.
 
-Planned extractions (one commit):
-1. **`_compute_patch_scores(gate_construction, sae_codes, feature_grads, residual_grad, residual)`** — dispatch the 4 gate construction branches (`combined`, `activation_only`, `gradient_only`, `no_SAE`), return `(s_t, contributions)`. Replaces lines 62–81.
-2. **`_collect_gate_debug_info(gate, s_t, contributions, sae_codes, feature_grads, gate_construction, active_feature_threshold)`** — extract the debug block (lines 94–133) including sparse feature collection loop. Return debug dict.
-3. **`_extract_decoder(sae)`** — extract decoder matrix from SAE (lines 177–182 of `apply_feature_gradient_gating`), centralizing the `W_dec`/`decoder.weight` dispatch.
+Planned refactor:
+1. **`_build_pipeline_config(dataset_name, experiment_params, output_dir, current_mode, debug_mode)`** — consolidate PipelineConfig construction including ImageNet/CLIP setup. Single source of truth for config, eliminates duplication between `run_single_experiment` and `run_parameter_sweep`.
+2. **`_build_experiment_grid(layer_combinations, kappa_values, gate_constructions, shuffle_decoder_options, clamp_max_values)`** — generate the list of experiment param dicts (vanilla baseline + all gated combinations) with their directory names. Makes the grid explicit and testable.
+3. **`_gpu_cleanup(aggressive=False)`** — centralize GC + CUDA cache clearing. Replace the 4 scattered cleanup blocks.
+4. **`_load_dataset_resources(dataset_name, layer_combinations, device)`** — extract model/SAE/CLIP loading from the per-dataset loop body. Returns `(model, clip_classifier, steering_resources)`.
+5. **`_release_dataset_resources(model, clip_classifier, steering_resources)`** — extract the heavy teardown block.
+6. **Simplify `run_single_experiment`** — receives a fully-built PipelineConfig instead of rebuilding it internally from an experiment_params dict.
+7. **Simplify `run_parameter_sweep`** — becomes a clear loop: load resources → iterate experiments → release resources → save summary.
 
 Hard constraints:
-- No algorithm/metric behavior changes — same gate values, same CAM output for identical inputs.
-- Signatures may change freely (tests exist to catch breakage at call sites).
-- Numeric equivalence: max_diff == 0.0 on fixed-seed synthetic inputs.
-- All existing tests must pass (smoke, boundary contracts, golden-value integration).
+- No algorithm/metric behavior changes.
+- Same output directory structure and file naming (tests depend on `layers_3_kappa_0.5_combined_clamp_10.0` naming).
+- Signatures may change freely (tests catch breakage).
+- All existing tests must pass.
 
 ### Decision Log
 - **WP-01**: Added `[build-system]` (hatchling) and `[tool.hatch.build.targets.wheel]` to pyproject.toml to make `src/gradcamfaith` an installable package. This is required for absolute imports (`from gradcamfaith.core.config import ...`) to work. `uv sync` installs the package in dev mode automatically.
@@ -246,6 +263,7 @@ Hard constraints:
 - **Validation follow-up (git hygiene)**: Added root `.gitignore` entries for `/models` and `/logs` so full-stack setup/test runs do not leave untracked runtime artifacts that block clean-worktree handoff checks.
 - **WP-06B v1 (attribution boundary refactor)**: Extracted `_postprocess_attribution` helper, removed unused `device` param from `apply_gradient_gating_to_cam`, added role docstrings. Review decision: rework requested — naming clarity insufficient.
 - **WP-06B-R3 (clean attribution API)**: `compute_attribution` is now the single canonical orchestrator returning `{predictions, attribution_positive, raw_attribution, debug_info}`. `pipeline.py` migrated to `compute_attribution` (no longer imports legacy names). `transmm_prisma_enhanced` and `generate_attribution_prisma_enhanced` converted to thin deprecated shims with `DeprecationWarning` and explicit removal plan (WP-07). `transmm.py` root wrapper re-exports `compute_attribution`. Added `tests/test_attribution_boundary_contracts.py` (4 tests). ARG001 findings: 2 (only download.py). Gate equivalence: max_diff == 0.0.
+- **WP-06C (gating boundary refactor)**: Extracted 4 private helpers from `core/gating.py`: `_extract_decoder` (SAE decoder dispatch), `_compute_patch_scores` (4-branch gate construction), `_collect_gate_debug_info` (sparse feature debug collection), `_apply_gate_to_cam` (CLS-aware gate application + delta computation). Public function bodies reduced to clear sequential steps. Gate equivalence: max_diff == 0.0. All 11 tests pass.
 - **Intermediate (golden-value regression test)**: Added `test_imagenet_golden_faithfulness_values` to `tests/test_integration_fresh_env.py`. Full-stack test runs imagenet val split, subset=500, seed=123, combined gate, layer [3], kappa=0.5, clamp_max=10.0 via `run_parameter_sweep`. Asserts exact golden values for SaCo (mean/std), PixelFlipping (count/mean/median), and FaithfulnessCorrelation (count/mean/median). Explicit cleanup via `shutil.rmtree` in `finally` block. Gated behind `GRADCAMFAITH_RUN_FULL_STACK=1` + CUDA.
 
 ## Tooling and Commands
@@ -534,9 +552,11 @@ All workpackages below are designed for coder ownership and maintainer review.
   - **WP-06C (gating boundary refactor)**:
     - split `compute_feature_gradient_gate` and `apply_feature_gradient_gating` into focused internal helpers (score construction, gate mapping, CAM application, debug packaging)
     - preserve public signatures unless explicitly approved
-  - **WP-06D (experiments readability refactor)**:
-    - split oversized orchestration functions in `experiments/sweep.py` and `experiments/case_studies.py` into small private helpers
-    - preserve external behavior and output locations
+  - **WP-06D (sweep readability rewrite)**:
+    - rewrite `experiments/sweep.py` for clarity and separation of concerns
+    - extract config construction, experiment grid generation, resource loading/teardown, and GPU cleanup into focused helpers
+    - eliminate duplicated ImageNet/CLIP setup between `run_single_experiment` and `run_parameter_sweep`
+    - preserve output directory structure, file naming, and metric behavior
   - **WP-06E (unused-argument + dead-surface cleanup)**:
     - clear `ARG001/ARG002` findings in touched modules (including `data/download.py`)
     - remove or annotate intentionally retained compatibility parameters
@@ -575,9 +595,10 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Review WP-06B-R3 on `wp/WP-06B-attribution-boundary-refactor` and record reviewer decision.
-2. After maintainer acceptance, integrate WP-06B-R3 commit(s) into `feature/team-research-restructure-plan`, tag `accepted/wp-06b`.
-3. Create branch `wp/WP-06C-gating-boundary-refactor` from integration HEAD and execute one-slice/one-commit flow with equivalence evidence.
+1. Create branch `wp/WP-06D-sweep-readability` from integration HEAD.
+2. Rewrite `experiments/sweep.py` per the WP-06D concrete plan above.
+3. Verify all existing tests pass (smoke + boundary + golden-value integration).
+4. Integrate into `feature/team-research-restructure-plan`, tag `accepted/wp-06d`.
 
 ## Done Criteria for This Rework
 - Core method code is isolated from experiment orchestration.
