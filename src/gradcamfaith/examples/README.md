@@ -27,7 +27,6 @@ from gradcamfaith.examples.minimal_run import ExampleConfig, run_example
 config = ExampleConfig(
     dataset_name="hyperkvasir",
     layers=[6, 9, 10],
-    kappa=0.5,
     subset_size=10,
 )
 results = run_example(config)

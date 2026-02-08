@@ -15,7 +15,7 @@ This document must be updated in each accepted WP-06 slice.
 |---|---|
 | Branch | `wp/WP-06-clarity-cleanup` |
 | Slice | `WP-06A` |
-| Commit SHA | (filled after commit) |
+| Commit SHA | `8f4ae89` (audit), `01925e0` (kappa/clamp_max follow-up) |
 | Author | coder |
 | Reviewer | (maintainer) |
 | Date (UTC) | 2026-02-07 |
@@ -59,7 +59,7 @@ The following public functions are compatibility-critical and must remain import
 ### Gating Module Inventory
 | Function | Primary Responsibility Tag | Secondary Responsibility Tags | Inputs Used? | Overlap Candidate | Notes |
 |---|---|---|---|---|---|
-| `compute_feature_gradient_gate` | `PURE_MATH` | `DEBUG_PACKING`, `NORMALIZATION` | `kappa` and `clamp_max` passed but ignored (see ledger) | no | Implements full gate formula: decoder projection -> contribution scoring (4 gate_construction modes) -> MAD normalization -> `10 ** tanh(s_norm)` mapping. Debug block is ~40 lines (~30% of function) with per-patch loop. |
+| `compute_feature_gradient_gate` | `PURE_MATH` | `DEBUG_PACKING`, `NORMALIZATION` | all used (`kappa` removed, `clamp_max` wired in) | no | Implements full gate formula: decoder projection -> contribution scoring (4 gate_construction modes) -> MAD normalization -> `clamp_max ** tanh(s_norm)` mapping. Debug block is ~40 lines (~30% of function) with per-patch loop. |
 | `apply_feature_gradient_gating` | `ADAPTER` | `I/O_PACKING`, `DEBUG_PACKING` | all used | no — clean boundary with `compute_feature_gradient_gate` | Entry point: unpacks config dict -> resolves SAE decoder matrix -> delegates to `compute_feature_gradient_gate` -> applies gate to CAM tensor (CLS-aware) -> computes attribution deltas -> compiles debug info dict. |
 
 ## Explicit Overlap Analysis
@@ -113,7 +113,7 @@ Extract debug collection from `compute_feature_gradient_gate` into a private hel
 | Slice | Target Files | Planned Changes | Public Signature Impact | Risk | Validation |
 |---|---|---|---|---|---|
 | `WP-06B` | `core/attribution.py` | (1) Annotate adapter/core roles in docstrings for `transmm_prisma_enhanced` and `generate_attribution_prisma_enhanced`. (2) Extract post-processing (reshape/interpolate/normalize) from `transmm_prisma_enhanced` into `_postprocess_attribution`. (3) Remove unused `device` parameter from internal `apply_gradient_gating_to_cam` and its call site. | none (only internal function touched) | low | Signature check + import smoke + numeric equivalence on synthetic gate tensor |
-| `WP-06C` | `core/gating.py` | (1) Extract debug collection from `compute_feature_gradient_gate` into `_collect_gate_debug_info`. (2) Add reservation comments on `kappa` and `clamp_max` explaining they are currently unused. (3) Optionally extract score construction dispatch into `_compute_patch_scores`. | none | low | Signature check + import smoke + numeric equivalence on synthetic gate tensor |
+| `WP-06C` | `core/gating.py` | (1) Extract debug collection from `compute_feature_gradient_gate` into `_collect_gate_debug_info`. (2) Optionally extract score construction dispatch into `_compute_patch_scores`. | none | low | Signature check + import smoke + numeric equivalence on synthetic gate tensor |
 | `WP-06D` | `experiments/sweep.py`, `experiments/case_studies.py` | Split oversized orchestration functions into small private helpers. Preserve external behavior and output locations. | none | low | Signature check + import smoke |
 | `WP-06E` | `data/download.py` and all touched modules | Clear remaining `ARG001`/`ARG002` findings: `description` in `download_from_gdrive`, `models_dir` in `download_imagenet`. Remove or annotate intentionally retained compatibility parameters. | depends on findings | low | `uvx ruff check --select ARG001,ARG002` clean |
 
@@ -136,7 +136,7 @@ generate_attribution_prisma_enhanced:
 (model: vit_prisma.models.base_vit.HookedSAEViT, input_tensor: torch.Tensor, config: gradcamfaith.core.config.PipelineConfig, idx_to_class: Dict[int, str], device: Optional[torch.device] = None, steering_resources: Optional[Dict[int, Dict[str, Any]]] = None, enable_feature_gradients: bool = True, feature_gradient_layers: Optional[List[int]] = None, clip_classifier: Optional[Any] = None) -> Dict[str, Any]
 
 compute_feature_gradient_gate:
-(residual_grad: torch.Tensor, residual: Optional[torch.Tensor], sae_codes: torch.Tensor, sae_decoder: torch.Tensor, kappa: float = 3.0, clamp_max: float = 5.0, gate_construction: str = 'combined', shuffle_decoder: bool = False, shuffle_decoder_seed: int = 12345, active_feature_threshold: float = 0.1, debug: bool = False) -> Tuple[torch.Tensor, Dict[str, Any]]
+(residual_grad: torch.Tensor, residual: Optional[torch.Tensor], sae_codes: torch.Tensor, sae_decoder: torch.Tensor, clamp_max: float = 10.0, gate_construction: str = 'combined', shuffle_decoder: bool = False, shuffle_decoder_seed: int = 12345, active_feature_threshold: float = 0.1, debug: bool = False) -> Tuple[torch.Tensor, Dict[str, Any]]
 
 apply_feature_gradient_gating:
 (cam_pos_avg: torch.Tensor, residual_grad: torch.Tensor, residual: Optional[torch.Tensor], sae_codes: torch.Tensor, sae: Any, config: Optional[Dict[str, Any]] = None, debug: bool = False) -> Tuple[torch.Tensor, Dict[str, Any]]

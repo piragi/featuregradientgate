@@ -171,7 +171,7 @@ This tracker is a required, evolving log for project state and near-term executi
 - What should happen next: `review WP-06A audit artifact, then proceed with WP-06B (attribution boundary refactor)`
 - Immediate next task (concrete): `WP-06B: annotate adapter/core roles, extract _postprocess_attribution, remove unused device param from apply_gradient_gating_to_cam`
 - Immediate validation for that task: `public signature check unchanged, import smokes pass, numeric equivalence max_diff == 0.0 on synthetic gate tensor`
-- Known blockers/risks now: `kappa and clamp_max in compute_feature_gradient_gate are plumbed through config but silently ignored (active formula uses hardcoded 10 ** tanh). Requires maintainer decision: retain as reserved with comment, or re-wire into active formula.`
+- Known blockers/risks now: `none — kappa/clamp_max resolved in WP-06A follow-up (kappa removed from gate chain, clamp_max wired into formula with default 10.0)`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
 
 ### Decision Log
@@ -442,27 +442,61 @@ All workpackages below are designed for coder ownership and maintainer review.
   - known limitations (e.g., required local data/model assets)
 - Deliverables: runnable example module, newcomer README, and reproducibility manifest path.
 
-### WP-06 Targeted Clarity Cleanup
-- Goal: reduce cognitive load in migrated code via no-behavior-change simplification.
-- In scope: identify and resolve unused arguments, redundant helpers, and overlong functions where decomposition improves readability.
-- In scope: prioritize recently migrated modules first:
+### WP-06 Deep Clarity + Responsibility Refactor (No Logic Change)
+- Goal: make the code substantially easier to read by clarifying responsibility boundaries and reducing unnecessary surface area, without changing algorithmic behavior.
+- Hard constraints:
+  - no metric semantic changes
+  - no attribution/gating algorithm changes
+  - no output artifact naming/path changes
+  - no CLI surface expansion
+- Priority modules:
+  - `src/gradcamfaith/core/attribution.py`
+  - `src/gradcamfaith/core/gating.py`
   - `src/gradcamfaith/experiments/sweep.py`
   - `src/gradcamfaith/experiments/case_studies.py`
   - `src/gradcamfaith/data/download.py`
-- In scope: for intentionally reserved parameters, keep signature but mark clearly (for example `_param`) and document why retained.
-- Required output:
-  - short “cleanup inventory” in PR summary listing each removed/renamed unused argument and each function split
-  - before/after function map for changed modules
-- Required behavior constraints:
-  - no metric semantic changes
-  - no output artifact naming/path changes
-  - no CLI surface expansion
-- Out of scope: algorithmic changes, metric redesign, or dataset logic changes.
-- Depends on: WP-04.
-- Acceptance checks: `uvx ruff check src/gradcamfaith/experiments src/gradcamfaith/data --select ARG001,ARG002` passes for touched files.
-- Acceptance checks: public entrypoint signatures remain unchanged unless explicitly approved and documented.
-- Acceptance checks: representative import/path smokes still pass after cleanup.
-- Deliverables: lower-complexity code in target modules, documented cleanup decisions, and unchanged runtime semantics.
+- Required process:
+  - do responsibility audit first, then refactor in narrow slices
+  - one scoped slice per commit
+  - for each slice: publish equivalence evidence + readability delta summary
+- Recommended execution slices (one commit each):
+  - **WP-06A (core audit contract)**: DONE (commit `8f4ae89`)
+    - produced `docs/refactor/wp06_core_responsibility_map.md`
+    - function inventory, overlap analysis, unused parameter ledger, equivalence contract
+    - fixed circular import in `models/__init__.py` (lazy re-export)
+  - **WP-06A follow-up**: DONE (commit `01925e0`)
+    - removed `kappa` from gate formula chain per maintainer decision
+    - wired `clamp_max` into active formula: `clamp_max ** tanh(s_norm)` with default 10.0
+    - ARG001 findings reduced from 5 to 3
+  - **WP-06B (attribution boundary refactor)**:
+    - separate orchestration, attribution post-processing, and output-packing responsibilities in `core/attribution.py`
+    - keep both public entrypoints (`transmm_prisma_enhanced`, `generate_attribution_prisma_enhanced`) import-stable
+    - make wrapper/adapter role explicit so overlap is intentional and documented, not accidental
+    - remove unused `device` parameter from internal `apply_gradient_gating_to_cam`
+  - **WP-06C (gating boundary refactor)**:
+    - split `compute_feature_gradient_gate` and `apply_feature_gradient_gating` into focused internal helpers (score construction, gate mapping, CAM application, debug packaging)
+    - preserve public signatures unless explicitly approved
+  - **WP-06D (experiments readability refactor)**:
+    - split oversized orchestration functions in `experiments/sweep.py` and `experiments/case_studies.py` into small private helpers
+    - preserve external behavior and output locations
+  - **WP-06E (unused-argument + dead-surface cleanup)**:
+    - clear `ARG001/ARG002` findings in touched modules (including `data/download.py`)
+    - remove or annotate intentionally retained compatibility parameters
+- Required output per slice:
+  - before/after function map for touched module(s)
+  - short rationale of responsibility improvements
+  - equivalence evidence summary (numeric or structural) for touched behavior
+- Out of scope:
+  - algorithm redesign
+  - metric formula changes
+  - new experiment semantics
+- Depends on: WP-04 and WP-05.
+- Acceptance checks (global for WP-06):
+  - `uvx ruff check src/gradcamfaith/core src/gradcamfaith/experiments src/gradcamfaith/data --select ARG001,ARG002`
+  - public entrypoint signatures unchanged unless explicitly approved and documented
+  - import/path smokes for root and package entrypoints still pass
+  - for slices touching `core/attribution.py` or `core/gating.py`, provide pre/post equivalence evidence on fixed-seed synthetic inputs (max absolute diff reported)
+- Deliverables: significantly improved readability in core + experiments, explicit responsibility documentation, and preserved runtime semantics.
 
 ### WP-07 Compatibility and Cleanup
 - Goal: tighten structure after migrations while preserving legacy branch compatibility promises.
@@ -482,9 +516,9 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Review `WP-05` on branch `wp/WP-05-example-path`, then assign `WP-06` (Targeted Clarity Cleanup) with branch name `wp/WP-06-clarity-cleanup`.
-2. Require one commit for the workpackage and include validation output summary in the PR description.
-3. Review against `Workpackage Review Checklist`, then update `Feature Tracker (Living)` with accepted result and next assignment.
+1. Review WP-06A audit artifact and kappa/clamp_max follow-up on branch `wp/WP-06-clarity-cleanup`, then assign WP-06B (attribution boundary refactor).
+2. Require one commit per slice with equivalence evidence in the commit summary.
+3. Review against `Workpackage Review Checklist`, then update `Feature Tracker (Living)` with accepted result and next slice assignment.
 
 ## Done Criteria for This Rework
 - Core method code is isolated from experiment orchestration.
