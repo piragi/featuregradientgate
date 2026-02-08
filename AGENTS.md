@@ -174,16 +174,18 @@ This tracker is a required, evolving log for project state and near-term executi
 
 - Program branch: `feature/team-research-restructure-plan`
 - Branching mode: `slice branches + immediate integration + accepted checkpoint tags`
-- Last successful commit reflected here: `WP-06C accepted and integrated into feature/team-research-restructure-plan`
+- Last successful commit reflected here: `WP-06D on wp/WP-06D-sweep-readability, pending integration`
 - Last accepted integration checkpoint: `accepted/wp-06c`
 - WP-06B status: `done and accepted`
-- WP-06C status: `done and accepted — gating.py refactored into focused helpers (_extract_decoder, _compute_patch_scores, _collect_gate_debug_info, _apply_gate_to_cam). Gate equivalence: max_diff == 0.0.`
-- What happened most recently: `WP-06C accepted: core/gating.py split into 4 private helpers + 2 public functions. Cherry-picked into integration branch, tagged accepted/wp-06c.`
+- WP-06C status: `done and accepted`
+- WP-06D status: `done, pending integration — sweep.py rewritten with 8 focused helpers + SweepConfig dataclass. Public signatures unchanged. All 14 tests pass.`
+- What happened most recently: `WP-06D: sweep.py rewritten from 3 functions (492 lines) to 8 helpers + 3 public functions + SweepConfig dataclass. main() now config-first with **asdict(cfg) unpacking.`
 - Reviewer decision: `accepted`
-- What should happen next: `create wp/WP-06D-sweep-readability from integration HEAD and rewrite sweep.py for clarity.`
-- Immediate next task (concrete): `WP-06D: rewrite experiments/sweep.py for readability and separation of concerns. See concrete plan below.`
-- Immediate validation for that task: `all existing tests pass (smoke + boundary + golden-value integration). Import smokes for root and package entrypoints.`
+- What should happen next: `integrate WP-06D, then WP-07: thorough legacy removal + resource extraction.`
+- Immediate next task (concrete): `WP-07: remove legacy compatibility wrappers, deprecated shims, and extract resource lifecycle management out of sweep.py. See WP-07 concrete plan below.`
+- Immediate validation for that task: `all existing tests pass after updating them to use package paths. Root wrapper import tests removed or updated.`
 - Known blockers/risks now: `none`
+- Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ as part of WP-07.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
 
 ### WP-06D Concrete Plan (`experiments/sweep.py`)
@@ -265,6 +267,7 @@ Hard constraints:
 - **WP-06B-R3 (clean attribution API)**: `compute_attribution` is now the single canonical orchestrator returning `{predictions, attribution_positive, raw_attribution, debug_info}`. `pipeline.py` migrated to `compute_attribution` (no longer imports legacy names). `transmm_prisma_enhanced` and `generate_attribution_prisma_enhanced` converted to thin deprecated shims with `DeprecationWarning` and explicit removal plan (WP-07). `transmm.py` root wrapper re-exports `compute_attribution`. Added `tests/test_attribution_boundary_contracts.py` (4 tests). ARG001 findings: 2 (only download.py). Gate equivalence: max_diff == 0.0.
 - **WP-06C (gating boundary refactor)**: Extracted 4 private helpers from `core/gating.py`: `_extract_decoder` (SAE decoder dispatch), `_compute_patch_scores` (4-branch gate construction), `_collect_gate_debug_info` (sparse feature debug collection), `_apply_gate_to_cam` (CLS-aware gate application + delta computation). Public function bodies reduced to clear sequential steps. Gate equivalence: max_diff == 0.0. All 11 tests pass.
 - **Intermediate (golden-value regression test)**: Added `test_imagenet_golden_faithfulness_values` to `tests/test_integration_fresh_env.py`. Full-stack test runs imagenet val split, subset=500, seed=123, combined gate, layer [3], kappa=0.5, clamp_max=10.0 via `run_parameter_sweep`. Asserts exact golden values for SaCo (mean/std), PixelFlipping (count/mean/median), and FaithfulnessCorrelation (count/mean/median). Explicit cleanup via `shutil.rmtree` in `finally` block. Gated behind `GRADCAMFAITH_RUN_FULL_STACK=1` + CUDA.
+- **WP-06D (sweep readability rewrite)**: Extracted 8 helpers from `experiments/sweep.py`: `_gpu_cleanup` (centralized GC/CUDA), `_print_gpu_memory` (GPU memory reporting), `_build_pipeline_config` (PipelineConfig construction), `_build_experiment_grid` (vanilla + gated param grid), `_build_imagenet_clip_prompts` (article-aware CLIP prompts), `_load_dataset_resources` (model/CLIP/SAE loading), `_release_dataset_resources` (teardown), `_summarize_result` (result extraction). Added `SweepConfig` dataclass matching `run_parameter_sweep` parameters 1:1 for `**asdict(cfg)` unpacking. `main()` simplified to config-first pattern. Public signatures unchanged. All 14 tests pass. Deferred: resource lifecycle helpers still in sweep.py — should move to `models/` in WP-07.
 
 ## Tooling and Commands
 Preferred command style:
@@ -577,14 +580,22 @@ All workpackages below are designed for coder ownership and maintainer review.
   - for slices touching `core/attribution.py` or `core/gating.py`, provide pre/post equivalence evidence on fixed-seed synthetic inputs (max absolute diff reported)
 - Deliverables: significantly improved readability in core + experiments, explicit responsibility documentation, and preserved runtime semantics.
 
-### WP-07 Compatibility and Cleanup
-- Goal: tighten structure after migrations while preserving legacy branch compatibility promises.
-- In scope: audit wrappers, imports, and deprecated paths; remove only what is explicitly approved.
-- In scope: update `README.md` and `AGENTS.md` to final structure and command paths.
-- Out of scope: dropping legacy wrappers without maintainer sign-off.
-- Depends on: WP-01 through WP-06.
-- Acceptance checks: documented command matrix remains valid.
-- Deliverables: final compatibility report and cleanup summary.
+### WP-07 Legacy Removal and Thorough Refactor
+- Goal: remove all legacy compatibility wrappers, deprecated shims, and stale indirection. Clean up the codebase so only the package paths exist. Extract misplaced concerns to their proper modules.
+- In scope:
+  - **Remove root compatibility wrappers**: `main.py`, `transmm.py`, `feature_gradient_gating.py`, `config.py`, `data_types.py`, `comparsion.py`, `analysis_feature_case_studies.py`, `sae.py` (root shims that re-export from `gradcamfaith.*`).
+  - **Remove deprecated attribution shims**: `transmm_prisma_enhanced` and `generate_attribution_prisma_enhanced` in `core/attribution.py` (scheduled for removal since WP-06B-R3).
+  - **Extract resource lifecycle from sweep.py**: move `_load_dataset_resources`, `_release_dataset_resources`, `_gpu_cleanup`, `_build_imagenet_clip_prompts` to `models/` (e.g. `models/resources.py` or extend `models/load.py`).
+  - **Update all tests**: replace root-wrapper imports with package paths. Remove signature checks for deleted root wrappers.
+  - **Update `pipeline.py`**: decide whether `pipeline.py` itself becomes a package module or stays as the last root-level orchestrator.
+  - **Update `README.md` and `AGENTS.md`** to reflect final structure and command paths.
+- Hard constraints:
+  - All algorithm/metric behavior stays the same.
+  - All existing tests must pass (updated to package paths).
+  - `uv run python -m gradcamfaith.experiments.sweep` must work as the new entry point.
+- Depends on: WP-06.
+- Acceptance checks: package entrypoints work, no root wrapper imports remain in tests or package code, `ruff check` clean.
+- Deliverables: clean package-only codebase, no stale wrappers, updated docs.
 
 ## Workpackage Review Checklist
 - Scope respected (`in scope` only, no silent expansion).
@@ -595,10 +606,11 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Create branch `wp/WP-06D-sweep-readability` from integration HEAD.
-2. Rewrite `experiments/sweep.py` per the WP-06D concrete plan above.
-3. Verify all existing tests pass (smoke + boundary + golden-value integration).
-4. Integrate into `feature/team-research-restructure-plan`, tag `accepted/wp-06d`.
+1. Integrate WP-06D into `feature/team-research-restructure-plan`, tag `accepted/wp-06d`.
+2. Create branch `wp/WP-07-legacy-removal` from integration HEAD.
+3. Execute WP-07: remove root wrappers, deprecated shims, extract resource lifecycle to `models/`, update all tests and imports to package paths.
+4. Verify all tests pass with package-only paths.
+5. Integrate into `feature/team-research-restructure-plan`, tag `accepted/wp-07`.
 
 ## Done Criteria for This Rework
 - Core method code is isolated from experiment orchestration.
