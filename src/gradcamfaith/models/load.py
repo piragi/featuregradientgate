@@ -42,7 +42,7 @@ def load_model_for_dataset(
         Tuple of (model, clip_classifier) where clip_classifier is None for non-CLIP models
     """
     # Check if we should use CLIP for this dataset
-    use_clip = (config and config.classify.use_clip) or dataset_config.name == "waterbirds"
+    use_clip = config and config.classify.use_clip
 
     if use_clip:
         from vit_prisma.models.model_loader import load_hooked_model
@@ -61,13 +61,13 @@ def load_model_for_dataset(
         print(f"CLIP loaded as HookedViT")
 
         # Create CLIP classifier for this model
-        from gradcamfaith.models.clip_classifier import create_clip_classifier_for_waterbirds
+        from gradcamfaith.models.clip_classifier import create_clip_classifier
         print("Creating CLIP classifier...")
-        clip_classifier = create_clip_classifier_for_waterbirds(
+        clip_classifier = create_clip_classifier(
             vision_model=model,
             device=device,
+            class_names=config.classify.clip_text_prompts,
             clip_model_name=clip_model_name,
-            custom_prompts=config.classify.clip_text_prompts if config.classify.clip_text_prompts else None
         )
 
         _validate_model_interface(model, "CLIP")

@@ -17,14 +17,14 @@ def load_steering_resources(layers: List[int], dataset_name: Optional[str] = Non
 
     Args:
         layers: List of layer indices to load
-        dataset_name: Name of the dataset ('covidquex', 'hyperkvasir', 'waterbirds', etc.)
+        dataset_name: Name of the dataset ('covidquex', 'hyperkvasir', 'imagenet', etc.)
     """
     resources = {}
 
     for layer_idx in layers:
         try:
-            if dataset_name in ["waterbirds", "imagenet"]:
-                # Use CLIP Vanilla B-32 SAE for waterbirds
+            if dataset_name == "imagenet":
+                # Use CLIP Vanilla B-32 SAE
                 sae_path = Path(f"data/sae_clip_vanilla_b32/layer_{layer_idx}/weights.pt")
                 if not sae_path.exists():
                     print(f"Warning: CLIP Vanilla SAE not found at {sae_path}")

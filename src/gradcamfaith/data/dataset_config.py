@@ -64,14 +64,8 @@ def create_hyperkvasir_transform(split: str = 'test') -> transforms.Compose:
     return transforms.Compose(base_transforms)
 
 
-def create_waterbirds_transform(_) -> transforms.Compose:
-    """Waterbirds transforms: CLIP preprocessing."""
-    from vit_prisma.transforms import get_clip_val_transforms
-    return get_clip_val_transforms()
-
-
 def create_imagenet_transform(_) -> transforms.Compose:
-    """ImageNet transforms: CLIP preprocessing (same as waterbirds)."""
+    """ImageNet transforms: CLIP preprocessing."""
     from vit_prisma.transforms import get_clip_val_transforms
     return get_clip_val_transforms()
 
@@ -146,23 +140,6 @@ HYPERKVASIR_CONFIG = DatasetConfig(
     transform_fn=create_hyperkvasir_transform
 )
 
-# Waterbirds Dataset Configuration
-WATERBIRDS_CONFIG = DatasetConfig(
-    name="waterbirds",
-    num_classes=2,
-    class_names=["landbird", "waterbird"],
-    class_to_idx={
-        "landbird": 0,
-        "waterbird": 1
-    },
-    idx_to_class={
-        0: "landbird",
-        1: "waterbird"
-    },
-    model_checkpoint="",
-    transform_fn=create_waterbirds_transform
-)
-
 _IMAGENET_CONFIG = None  # module-level cache
 
 
@@ -212,7 +189,6 @@ def refresh_imagenet_config() -> None:
 DATASET_CONFIGS = {
     "covidquex": COVIDQUEX_CONFIG,
     "hyperkvasir": HYPERKVASIR_CONFIG,
-    "waterbirds": WATERBIRDS_CONFIG,
     "imagenet": get_imagenet_config,
 }
 

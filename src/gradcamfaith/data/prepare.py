@@ -1,7 +1,7 @@
 """
 Dataset preparation and conversion utilities.
 
-Converts raw datasets (HyperKvasir, ImageNet, CovidQueX, Waterbirds)
+Converts raw datasets (HyperKvasir, ImageNet, CovidQueX)
 into a unified directory format: train/val/test/class_<idx>/.
 """
 import json
@@ -187,65 +187,6 @@ def prepare_hyperkvasir(
     return conversion_stats
 
 
-def prepare_waterbirds(source_path: Path, output_path: Path, config: Optional['DatasetConfig'] = None) -> Dict:
-    """Convert Waterbirds dataset to unified format."""
-    output_path, source_path = Path(output_path), Path(source_path)
-
-    if config is None:
-        from gradcamfaith.data.dataset_config import WATERBIRDS_CONFIG
-        config = WATERBIRDS_CONFIG
-
-    _create_output_structure(output_path, config.num_classes)
-    conversion_stats = _create_conversion_stats('waterbirds', config)
-    conversion_stats['groups'] = {'landbird_land': 0, 'landbird_water': 0, 'waterbird_land': 0, 'waterbird_water': 0}
-
-    # Load metadata
-    metadata_path = source_path / "metadata.csv"
-    if not metadata_path.exists():
-        raise ValueError(f"Metadata file not found at {metadata_path}")
-
-    df = pd.read_csv(metadata_path)
-    print(f"Found {len(df)} images in metadata")
-
-    split_mapping = {0: 'train', 1: 'val', 2: 'test'}
-
-    for _, row in tqdm(df.iterrows(), desc="Processing Waterbirds", total=len(df)):
-        y, place, split_idx = int(row['y']), int(row['place']), int(row['split'])
-
-        if split_idx not in split_mapping:
-            print(f"Warning: Unknown split index {split_idx}, skipping")
-            continue
-
-        split = split_mapping[split_idx]
-        class_name = config.idx_to_class[y]
-
-        # Track group statistics (unique to Waterbirds)
-        group_name = f"{class_name}_{'land' if place == 0 else 'water'}"
-        conversion_stats['groups'][group_name] += 1
-
-        img_path = source_path / row['img_filename']
-        if not img_path.exists():
-            print(f"Warning: Image not found at {img_path}")
-            continue
-
-        img_count = conversion_stats['splits'][split]
-        new_name = f"img_{y:02d}_{split}_{img_count:05d}.jpg"
-        dest_path = output_path / split / f"class_{y}" / new_name
-        _process_image(img_path, dest_path, conversion_stats, split, class_name, copy_only=True)
-
-    # Custom metadata saving for Waterbirds (includes group stats)
-    with open(output_path / "dataset_metadata.json", 'w') as f:
-        json.dump(conversion_stats, f, indent=2)
-
-    print(f"\nConversion complete!")
-    print(f"Total images: {conversion_stats['total_images']}")
-    print(f"Splits: {conversion_stats['splits']}")
-    print(f"Classes: {conversion_stats['classes']}")
-    print(f"Groups: {conversion_stats['groups']}")
-
-    return conversion_stats
-
-
 def prepare_imagenet(source_path: Path, output_path: Path, config: Optional['DatasetConfig'] = None) -> Dict:
     """
     Convert ImageNet dataset to unified format.
@@ -333,7 +274,6 @@ def convert_dataset(dataset_name: str, source_path: Path, output_path: Path, **k
     converters = {
         'covidquex': prepare_covidquex,
         'hyperkvasir': prepare_hyperkvasir,
-        'waterbirds': prepare_waterbirds,
         'imagenet': prepare_imagenet,
     }
 
