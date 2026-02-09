@@ -16,7 +16,6 @@ Flow:
 """
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import List
 
 import numpy as np
@@ -213,15 +212,7 @@ def _saco_for_image(result, model, config, device, n_bins=20):
 # ---------------------------------------------------------------------------
 
 def _get_or_compute_binned_results(config, original_results, model, device, n_bins):
-    """Load cached bin results or compute from scratch."""
-    if config.file.use_cached_perturbed:
-        cache_path = config.file.output_dir / config.file.use_cached_perturbed
-        print(f"Attempting to load cached results from: {cache_path}")
-        if cache_path.exists():
-            print("Cache file found! Loading...")
-            return pd.read_csv(cache_path)
-        print("Cache file not found. Proceeding with computation.")
-
+    """Compute binned SaCo results for all images."""
     print(f"Computing binned SaCo results for {len(original_results)} images...")
     all_records = []
     for result in tqdm(original_results, desc=f"Processing with {n_bins} bins"):
@@ -278,13 +269,11 @@ def run_binned_attribution_analysis(config, vit_model, original_results, device,
         print(f"  Average SaCo: {saco_df['saco_score'].mean():.4f}")
         print(f"  Std SaCo: {saco_df['saco_score'].std():.4f}")
 
-    # Save
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-    ds_name = config.file.output_dir.name
-    bin_results_df.to_csv(config.file.output_dir / f"{ds_name}_bin_results.csv", index=False)
-    for name, df in analysis_results.items():
-        if isinstance(df, pd.DataFrame) and not df.empty:
-            df.to_csv(config.file.output_dir / f"analysis_{name}_binned_{timestamp}.csv", index=False)
+    # Save debug outputs if enabled
+    if config.classify.boosting.debug_mode:
+        debug_dir = config.file.output_dir / "debug"
+        debug_dir.mkdir(exist_ok=True, parents=True)
+        bin_results_df.to_csv(debug_dir / "saco_bin_results.csv", index=False)
 
     print("=== BINNED SACO ANALYSIS COMPLETE ===")
     return analysis_results

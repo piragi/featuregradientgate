@@ -163,8 +163,7 @@ def test_feature_gate_is_deterministic_for_fixed_inputs():
     )
 
     assert torch.allclose(gate_1, gate_2)
-    assert debug_1["mean_gate"] == pytest.approx(debug_2["mean_gate"])
-    assert debug_1["std_gate"] == pytest.approx(debug_2["std_gate"])
+    assert debug_1 == debug_2 == {}  # debug=False returns empty dict
 
 
 def test_feature_gate_shuffle_is_seeded_and_bounded():

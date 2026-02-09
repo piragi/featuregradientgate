@@ -205,17 +205,11 @@ def compute_feature_gradient_gate(
     s_norm = (s_t - s_median) / (1.4826 * s_mad)
     gate = (clamp_max ** torch.tanh(s_norm)).detach()
 
-    # Debug info
-    if debug:
-        debug_info = _collect_gate_debug_info(
-            gate, s_t, contributions, sae_codes, feature_grads,
-            gate_construction, active_feature_threshold,
-        )
-    else:
-        debug_info = {
-            'mean_gate': gate.mean().item(),
-            'std_gate': gate.std().item(),
-        }
+    # Debug info (skip entirely when not debugging — caller discards it)
+    debug_info = _collect_gate_debug_info(
+        gate, s_t, contributions, sae_codes, feature_grads,
+        gate_construction, active_feature_threshold,
+    ) if debug else {}
 
     return gate, debug_info
 
@@ -270,11 +264,14 @@ def apply_feature_gradient_gating(
         cam_pos_avg, feature_gate,
     )
 
-    debug_info = {
-        'feature_gating': feature_debug,
-        'combined_gate': feature_gate.detach().cpu().numpy() if debug else None,
-        'cam_delta': cam_delta.detach().cpu().numpy() if debug else None,
-        'patch_attribution_deltas': patch_attribution_deltas.detach().cpu().numpy() if debug else None,
-    }
+    if debug:
+        debug_info = {
+            'feature_gating': feature_debug,
+            'combined_gate': feature_gate.detach().cpu().numpy(),
+            'cam_delta': cam_delta.detach().cpu().numpy(),
+            'patch_attribution_deltas': patch_attribution_deltas.detach().cpu().numpy(),
+        }
+    else:
+        debug_info = {}
 
     return gated_cam, debug_info

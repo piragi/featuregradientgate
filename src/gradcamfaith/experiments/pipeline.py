@@ -1,8 +1,8 @@
 """
 Unified Pipeline — experiment orchestrator.
 
-Prepares data, loops over images, accumulates debug info, saves CSV results,
-runs faithfulness evaluation, and runs SaCo attribution analysis.
+Prepares data, classifies+explains each image, then runs faithfulness and
+SaCo analysis.  Debug I/O is isolated in private helpers at the bottom.
 """
 
 import logging
@@ -109,18 +109,14 @@ def run_unified_pipeline(
     if clip_classifier is not None:
         print("Using pre-loaded CLIP classifier")
 
-    # Classify and explain
+    # Classify and explain each image
     results = []
-
-    # Initialize debug data accumulators if debug mode is enabled
     debug_mode = config.classify.boosting.debug_mode
-    debug_data_per_layer = {}  # {layer_idx: {key: list of values per image}}
+    debug_data_per_layer = {}
 
     for _, (image_path, true_label_idx) in enumerate(tqdm(image_data, desc="Classifying & Explaining")):
         try:
-            # Convert label index to label name (handle unlabeled = -1)
             true_label = dataset_config.idx_to_class.get(true_label_idx)
-
             result, debug_info = classify_explain_single_image(
                 config=config,
                 dataset_config=dataset_config,
@@ -129,80 +125,17 @@ def run_unified_pipeline(
                 device=device,
                 steering_resources=steering_resources,
                 true_label=true_label,
-                clip_classifier=clip_classifier  # Pass pre-created classifier
+                clip_classifier=clip_classifier,
             )
             results.append(result)
-
-            # Accumulate debug data
             if debug_mode and debug_info:
-                for layer_idx, layer_debug in debug_info.items():
-                    # Extract feature_gating nested dict
-                    feature_gating = layer_debug.get('feature_gating', {})
-
-                    if layer_idx not in debug_data_per_layer:
-                        debug_data_per_layer[layer_idx] = {
-                            'gate_values': [],
-                            'patch_attribution_deltas': [],
-                            'contribution_sum': [],
-                            'total_contribution_magnitude': [],
-                        }
-                    # Skip sparse feature accumulation to save RAM
-                    # (uncomment if needed for detailed per-feature analysis)
-                    # debug_data_per_layer[layer_idx]['sparse_indices'].append(
-                    #     feature_gating.get('sparse_features_indices', [])
-                    # )
-                    # debug_data_per_layer[layer_idx]['sparse_activations'].append(
-                    #     feature_gating.get('sparse_features_activations', [])
-                    # )
-                    # debug_data_per_layer[layer_idx]['sparse_gradients'].append(
-                    #     feature_gating.get('sparse_features_gradients', [])
-                    # )
-                    # debug_data_per_layer[layer_idx]['sparse_contributions'].append(
-                    #     feature_gating.get('sparse_features_contributions', [])
-                    # )
-                    debug_data_per_layer[layer_idx]['gate_values'].append(feature_gating.get('gate_values', np.array([])))
-                    debug_data_per_layer[layer_idx]['patch_attribution_deltas'].append(
-                        layer_debug.get('patch_attribution_deltas', np.array([]))
-                    )
-                    debug_data_per_layer[layer_idx]['contribution_sum'].append(
-                        feature_gating.get('contribution_sum', np.array([]))
-                    )
-                    debug_data_per_layer[layer_idx]['total_contribution_magnitude'].append(
-                        feature_gating.get('total_contribution_magnitude', np.array([]))
-                    )
-
+                _accumulate_debug_info(debug_data_per_layer, debug_info)
         except Exception as e:
             print(f"Error processing {image_path.name}: {e}")
             continue
 
-    # Save results
-    if results:
-        csv_path = config.file.output_dir / f"results_{dataset_name}_unified.csv"
-        io_utils.save_classification_results_to_csv(results, csv_path)
-        print(f"Results saved to {csv_path}")
-
-    # Save debug data if collected
-    if debug_mode and debug_data_per_layer:
-        debug_dir = config.file.output_dir / "debug_data"
-        debug_dir.mkdir(exist_ok=True, parents=True)
-
-        for layer_idx, layer_data in debug_data_per_layer.items():
-            debug_file = debug_dir / f"layer_{layer_idx}_debug.npz"
-
-            # Convert lists to numpy arrays
-            gate_values_array = np.array(layer_data['gate_values'])
-            patch_attribution_deltas_array = np.array(layer_data['patch_attribution_deltas'])
-            contribution_sum_array = np.array(layer_data['contribution_sum'])
-            total_contribution_magnitude_array = np.array(layer_data['total_contribution_magnitude'])
-
-            # Save with numpy - sparse data skipped to save RAM
-            np.savez_compressed(
-                debug_file,
-                gate_values=gate_values_array,
-                patch_attribution_deltas=patch_attribution_deltas_array,
-                contribution_sum=contribution_sum_array,
-                total_contribution_magnitude=total_contribution_magnitude_array
-            )
+    # Save debug outputs (classification CSV + gate/attribution .npz)
+    _save_debug_outputs(config, results, debug_data_per_layer)
 
     # For CLIP models, wrap the classifier for both faithfulness and attribution analysis
     model_for_analysis = model
@@ -221,14 +154,56 @@ def run_unified_pipeline(
         except Exception as e:
             print(f"Error in faithfulness evaluation: {e}")
 
-    # Run attribution analysis
-    # n_bins is automatically determined from config based on model architecture (B-16 vs B-32)
+    # Run SaCo attribution analysis
     print("Running SaCo attribution analysis...")
     saco_analysis = run_binned_attribution_analysis(config, model_for_analysis, results, device)
-
-    # Extract SaCo summary statistics
     saco_results = extract_saco_summary(saco_analysis)
 
     print("\nPipeline complete!")
-
     return results, saco_results
+
+
+# ---------------------------------------------------------------------------
+# Debug I/O helpers (all output goes to output_dir/debug/)
+# ---------------------------------------------------------------------------
+
+def _accumulate_debug_info(debug_data_per_layer, debug_info):
+    """Accumulate per-image debug data into per-layer buffers."""
+    for layer_idx, layer_debug in debug_info.items():
+        feature_gating = layer_debug.get('feature_gating', {})
+        if layer_idx not in debug_data_per_layer:
+            debug_data_per_layer[layer_idx] = {
+                'gate_values': [],
+                'patch_attribution_deltas': [],
+                'contribution_sum': [],
+                'total_contribution_magnitude': [],
+            }
+        buf = debug_data_per_layer[layer_idx]
+        buf['gate_values'].append(feature_gating.get('gate_values', np.array([])))
+        buf['patch_attribution_deltas'].append(layer_debug.get('patch_attribution_deltas', np.array([])))
+        buf['contribution_sum'].append(feature_gating.get('contribution_sum', np.array([])))
+        buf['total_contribution_magnitude'].append(feature_gating.get('total_contribution_magnitude', np.array([])))
+
+
+def _save_debug_outputs(config, results, debug_data_per_layer):
+    """Save all debug outputs to output_dir/debug/. Gated by debug_mode."""
+    if not config.classify.boosting.debug_mode:
+        return
+    if not results and not debug_data_per_layer:
+        return
+
+    debug_dir = config.file.output_dir / "debug"
+    debug_dir.mkdir(exist_ok=True, parents=True)
+
+    if results:
+        csv_path = debug_dir / "classification_results.csv"
+        io_utils.save_classification_results_to_csv(results, csv_path)
+
+    for layer_idx, layer_data in debug_data_per_layer.items():
+        np.savez_compressed(
+            debug_dir / f"layer_{layer_idx}_debug.npz",
+            gate_values=np.array(layer_data['gate_values']),
+            patch_attribution_deltas=np.array(layer_data['patch_attribution_deltas']),
+            contribution_sum=np.array(layer_data['contribution_sum']),
+            total_contribution_magnitude=np.array(layer_data['total_contribution_magnitude']),
+        )

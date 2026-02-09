@@ -37,7 +37,7 @@ def extract_sae_activations_if_needed(
         output_dir = Path(f"./sae_activations/{dataset_name}_{split}")
 
     # Check if activations already exist
-    debug_dir = output_dir / "debug_data"
+    debug_dir = output_dir / "debug"
     metadata_file = output_dir / "extraction_metadata.json"
 
     if debug_dir.exists() and metadata_file.exists():
@@ -117,7 +117,7 @@ def _extract_sae_activations(
     # Initialize storage and checkpointing
     checkpoint_interval = 10000
     layer_data = {layer_idx: {'sparse_indices': [], 'sparse_activations': []} for layer_idx in layers}
-    debug_dir = output_dir / "debug_data"
+    debug_dir = output_dir / "debug"
     debug_dir.mkdir(exist_ok=True, parents=True)
 
     print(f"\nExtracting SAE activations (saving every {checkpoint_interval} images)...")
@@ -310,7 +310,7 @@ def load_debug_data(path: Path, layers: Optional[List[int]] = None) -> Dict[int,
         path: Path to experiment directory
         layers: Optional list of specific layers to load. If None, loads all layers.
     """
-    debug_dir = path / "debug_data"
+    debug_dir = path / "debug"
     if not debug_dir.exists():
         raise FileNotFoundError(f"Debug data directory not found: {debug_dir}")
 
@@ -350,7 +350,7 @@ def load_activation_data(path: Path, layers: Optional[List[int]] = None, max_ima
         layers: Optional list of specific layers to load. If None, loads all layers.
         max_images: Optional limit on number of images to load (for memory savings).
     """
-    debug_dir = path / "debug_data"
+    debug_dir = path / "debug"
     if not debug_dir.exists():
         raise FileNotFoundError(f"Activation data directory not found: {debug_dir}")
 

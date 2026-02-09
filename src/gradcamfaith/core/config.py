@@ -16,7 +16,6 @@ class FileConfig:
 
     # Caching behavior
     use_cached_original: bool = True
-    use_cached_perturbed: str = ""
 
     @property
     def mode_dir(self) -> Path:
@@ -99,9 +98,9 @@ class BoostingConfig:
     shuffle_decoder: bool = False  # Shuffle decoder columns to break semantic alignment
     shuffle_decoder_seed: int = 12345  # Random seed for decoder shuffling (reproducibility)
 
-    # Debug mode - collect detailed feature data
-    debug_mode: bool = False  # If True, collect sparse features, gradients, and gate values per image
-    active_feature_threshold: float = 0.1  # Threshold for considering a feature "active" in debug mode
+    # Debug mode — collect gate/feature data per image and write extra outputs to output_dir/debug/
+    debug_mode: bool = False
+    active_feature_threshold: float = 0.1  # Threshold for considering a feature "active" in debug collection
 
 
 @dataclass
