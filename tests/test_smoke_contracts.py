@@ -1,5 +1,4 @@
 import inspect
-import json
 
 import pytest
 import torch
@@ -113,27 +112,6 @@ def test_public_signature_contracts():
 
     assert _param_names(load_model_for_dataset) == ["dataset_config", "device", "config"]
     assert _param_names(load_steering_resources) == ["layers", "dataset_name"]
-
-
-def test_example_dry_run_manifest_contract(tmp_path):
-    from gradcamfaith.examples.minimal_run import ExampleConfig, run_example
-
-    output_dir = tmp_path / "example"
-    config = ExampleConfig(output_dir=output_dir, dry_run=True, random_seed=123)
-
-    result = run_example(config)
-    manifest_path = output_dir / "run_manifest.json"
-
-    assert result["status"] == "dry-run"
-    assert manifest_path.exists()
-
-    manifest = json.loads(manifest_path.read_text())
-    assert set(manifest) >= {"resolved_config", "seed", "timestamp", "git_sha", "environment_lock"}
-    assert manifest["seed"] == 123
-    assert manifest["environment_lock"] == "uv.lock"
-    assert manifest["resolved_config"]["random_seed"] == 123
-    assert manifest["resolved_config"]["dry_run"] is True
-
 
 def test_feature_gate_is_deterministic_for_fixed_inputs():
     from gradcamfaith.core.gating import compute_feature_gradient_gate

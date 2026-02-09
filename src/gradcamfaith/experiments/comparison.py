@@ -533,7 +533,7 @@ def main(sweep_dirs: List[str]):
 if __name__ == "__main__":
     # Specific sweep directories to analyze
     sweep_dirs = [
-        "experiments/feature_gradient_sweep_20260209_225220/"
+        "data/runs/feature_gradient_sweep_20260209_225220/"
     ]
 
     print(f"Analyzing sweep directories: {sweep_dirs}")

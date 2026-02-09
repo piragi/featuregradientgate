@@ -50,7 +50,7 @@ def train_single_config(dataset_name, layer_idx, expansion_factor, k, lr):
     hooked_model, _ = load_model_for_dataset(dataset_config, device)
 
     # Set up data paths
-    data_path = Path(f"data/{dataset_name}_unified")
+    data_path = Path(f"data/prepared/{dataset_name}")
     train_path = data_path / "train"
     val_path = data_path / "val"
 

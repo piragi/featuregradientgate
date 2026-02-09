@@ -752,8 +752,8 @@ def run_case_study_analysis(
     dataset_config = get_dataset_config(dataset)
 
     # Determine image directories
-    test_image_dir = Path(f"./data/{dataset}_unified/test")
-    val_image_dir = Path(f"./data/{dataset}_unified/val")
+    test_image_dir = Path(f"./data/prepared/{dataset}/test")
+    val_image_dir = Path(f"./data/prepared/{dataset}/val")
 
     # Create mapping from debug_idx to image_idx for test set
     # The debug data is in processing order, same as faithfulness CSV rows
@@ -851,7 +851,7 @@ def run_case_study_analysis(
 if __name__ == "__main__":
     # Configuration
     dataset = 'imagenet'
-    experiment_path = Path("experiments/feature_gradient_sweep_20260209_225220/")  # TODO: Fill out the experiment folder
+    experiment_path = Path("data/runs/feature_gradient_sweep_20260209_225220/")  # TODO: Fill out the experiment folder
     experiment_config = "layers_6_7_8_kappa_0.5_combined_clamp_10.0"
     layers = [6,7,8]
 

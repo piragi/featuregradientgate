@@ -2,7 +2,7 @@
 Dataset preparation and conversion utilities.
 
 Converts raw datasets (HyperKvasir, ImageNet, CovidQueX)
-into a unified directory format: train/val/test/class_<idx>/.
+into a prepared directory format: train/val/test/class_<idx>/.
 """
 import json
 import shutil
@@ -97,7 +97,7 @@ def split_ids(len_ids):
 
 
 def prepare_covidquex(source_path: Path, output_path: Path, config: DatasetConfig = COVIDQUEX_CONFIG) -> Dict:
-    """Convert CovidQUEX dataset to unified format."""
+    """Convert CovidQUEX dataset to prepared format."""
     output_path, source_path = Path(output_path), Path(source_path)
 
     _create_output_structure(output_path, config.num_classes)
@@ -137,7 +137,7 @@ def prepare_hyperkvasir(
     config: DatasetConfig = HYPERKVASIR_CONFIG,
     csv_path: Optional[Path] = None
 ) -> Dict:
-    """Convert HyperKvasir dataset to unified format using CSV metadata."""
+    """Convert HyperKvasir dataset to prepared format using CSV metadata."""
     output_path, source_path = Path(output_path), Path(source_path)
 
     _create_output_structure(output_path, config.num_classes)
@@ -189,7 +189,7 @@ def prepare_hyperkvasir(
 
 def prepare_imagenet(source_path: Path, output_path: Path, config: Optional['DatasetConfig'] = None) -> Dict:
     """
-    Convert ImageNet dataset to unified format.
+    Convert ImageNet dataset to prepared format.
     If raw/test exists, copy val and test directly. Otherwise, fall back to splitting val in half.
     """
     output_path, source_path = Path(output_path), Path(source_path)

@@ -49,16 +49,19 @@ For concurrent paper release:
 - Next slice always branches from the new integration HEAD after the accepted checkpoint is in.
 - Promotion to `main` happens later as a separate integration decision after workpackage validation.
 
-## Current Repo Snapshot (post WP-10)
+## Current Repo Snapshot (post WP-18)
 - Zero root `.py` files remain. All code lives in the package.
 - Package code (`src/gradcamfaith/`) is the canonical source for all modules:
   - `core/` — attribution, gating, config, types
   - `data/` — dataset_config, dataloader, download, prepare, setup, io_utils
   - `models/` — load, sae_resources, clip_classifier
   - `experiments/` — pipeline, classify, sweep, sae_train, comparison, case_studies, faithfulness, saco
-  - `examples/` — minimal_run
 - `models/__init__.py` uses clean eager re-exports of `load_model_for_dataset` and `load_steering_resources` (no `__getattr__` hack).
 - Dependency graph is unidirectional: `core → data → models → experiments` (no cycles).
+- Runtime path conventions:
+  - prepared datasets: `data/prepared/<dataset>/`
+  - run outputs: `data/runs/<run_name>/`
+  - model checkpoints: `data/models/<dataset>/`
 
 ## Target Structure
 Package layout under `src/gradcamfaith` with unidirectional dependency flow: `core → data → models → experiments`.
@@ -92,15 +95,11 @@ src/gradcamfaith/
     sae_train.py        # SAE training
     comparison.py       # post-hoc experiment comparison
     case_studies.py     # qualitative case study analysis
-  examples/
-    minimal_run.py
-    README.md
 ```
 
 Notes:
 - Keep modules focused. Prefer small composable files over one large orchestrator.
 - No circular dependencies: experiments may import from models/data/core; models from data/core; data from core only.
-- Add at least one runnable example (`examples/minimal_run.py`) that demonstrates the end-to-end happy path on a tiny subset.
 
 ## Migration Map (Current -> Target)
 Completed migrations (WP-01 through WP-07):
@@ -170,8 +169,8 @@ This tracker is a required, evolving log for project state and near-term executi
 
 - Program branch: `feature/team-research-restructure-plan`
 - Branching mode: `slice branches + immediate integration + accepted checkpoint tags`
-- Last successful commit reflected here: `WP-10 integrated, accepted/wp-10 tagged`
-- Last accepted integration checkpoint: `accepted/wp-10`
+- Last successful commit reflected here: `WP-19 integrated, accepted/wp-19 tagged`
+- Last accepted integration checkpoint: `accepted/wp-19`
 - WP-06B status: `done and accepted`
 - WP-06C status: `done and accepted`
 - WP-06D status: `done and accepted`
@@ -185,14 +184,15 @@ This tracker is a required, evolving log for project state and near-term executi
 - WP-14 status: `done and accepted`
 - WP-15 status: `done and accepted`
 - WP-16 status: `done and accepted`
-- WP-17 status: `in progress — Parts 1-7 implemented, function splitting done, runtime data format mismatch discovered (pre-existing). Not yet committed.`
-- WP-18 status: `planned`
-- What happened most recently: `WP-17 implementation revealed that case_studies.py depends on data that the pipeline never saves: (1) per-image SaCo scores as CSV, (2) sparse feature debug data. Also found results.json only has SaCo overview while faithfulness_stats only has FC+PF. Debug NPZ saves 4 unused fields and misses 3 needed fields. WP-18 addresses all of this.`
-- Reviewer decision: `WP-17 implementation approved, WP-18 plan needed before commit.`
-- What should happen next: `implement WP-18 on wp/WP-17-analysis-cleanup branch (same branch, extends WP-17).`
-- Immediate next task (concrete): `implement WP-18 data consolidation changes.`
-- Immediate validation for that task: `uv run pytest — all pass. Manual: verify faithfulness_stats JSON contains SaCo, results.json contains all 3 metrics, debug NPZ contains only needed fields.`
-- Known blockers/risks now: `WP-18 changes output file formats — comparison.py and case_studies.py loaders must update in lockstep. Existing experiment data uses old format.`
+- WP-17 status: `done and accepted`
+- WP-18 status: `done and accepted`
+- WP-19 status: `done and accepted — path normalization + cleanup complete: prepared dataset paths moved to data/prepared, run outputs moved to data/runs, model checkpoints moved to data/models, examples removed.`
+- What happened most recently: `WP-19 completed path migration in code/docs/tests, added opt-in raw source cleanup after prepare, migrated existing local run/model/prepared directories, and validated with uv run pytest (13 passed, 3 skipped).`
+- Reviewer decision: `accepted`
+- What should happen next: `decide archive strategy for docs/scripts/tests/AGENTS history, then continue deferred refactors (sweep resource lifecycle extraction and analysis compression).`
+- Immediate next task (concrete): `define archive scope and retention policy without deleting useful reproducibility artifacts.`
+- Immediate validation for that task: `no code changes required; document decisions in AGENTS.md and plan next slice.`
+- Known blockers/risks now: `older experiment artifacts still use pre-WP18 schema and old root output paths; comparison.py no longer supports old results.json format without rerun.`
 - Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ in a future WP.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
 
@@ -1575,6 +1575,10 @@ No backward compatibility with old `saco_results` format — old experiment data
 - **WP-11 (faithfulness metric decomposition)**: Split `faithfulness.py` (929L) into 3 files: `faithfulness.py` (401L, shared perturbation infra + orchestration + reporting), `pixel_flipping.py` (90L, `PatchPixelFlipping` class), `faithfulness_correlation.py` (112L, `FaithfulnessCorrelation` class). Compressed `saco.py` (780→429L): removed 3 dataclasses (`ImageData`, `BinnedPerturbationData`, `BinImpactResult`), replaced with tuple returns; deduplicated `create_spatial_mask_for_bin` by importing shared `create_patch_mask` from faithfulness.py; inlined single-use functions (`analyze_key_attribution_patterns`, `run_binned_saco_analysis`); made `_analyze_faithfulness_vs_correctness` private. Shared perturbation infra: `create_patch_mask` (returns numpy H,W mask), `apply_baseline_perturbation` (handles broadcasting), `predict_on_batch`, `normalize_patch_attribution`. Factory functions absorbed into class `__init__`. Total LOC: 1709→1032 (40% reduction). All 14 tests pass.
 - **WP-16 (remove waterbirds dataset support)**: Deleted `WATERBIRDS_CONFIG`, `create_waterbirds_transform`, `prepare_waterbirds` function, and all registry/converter entries. Renamed `create_clip_classifier_for_waterbirds` → `create_clip_classifier` with required `class_names` parameter (no waterbirds default fallback). Removed hardcoded `dataset_config.name == "waterbirds"` CLIP check in `models/load.py` — CLIP usage now purely config-driven via `config.classify.use_clip`. Removed `"waterbirds"` from SAE path condition in `sae_resources.py`. Zero waterbird references remain in `src/`. 3 supported datasets: imagenet, covidquex, hyperkvasir. All 14 tests pass.
 - **WP-12 (SaCo simplification + perturbation bugfix)**: Simplified `saco.py` (429→324L). **Bugfix: spatial misalignment in SaCo perturbation** — old `apply_binned_perturbation` applied the 224x224 patch mask at the original PIL image resolution (e.g., 500x375), then resize+center-crop back to 224x224 distorted patch boundaries. Diagnostic confirmed: 489 unmasked pixels changed (max diff 0.44), masked fill non-uniform (std=0.18/channel from resize interpolation blending). Fixed by perturbing directly on the cached (C,224,224) tensor using shared `apply_baseline_perturbation` — exact patch grid alignment, uniform fill, no PIL round-trip. Golden SaCo values updated (gated mean: 0.2633→0.3217, std: 0.4044→0.4138). Rewrote `calculate_saco_vectorized_with_bias` → `calculate_saco`: clear pairwise loop using signed `attr_diff` weights with descending sort (required for correct sign). Removed bias computation (never used). Replaced `batched_model_inference` → `_classify_batch`: returns numpy arrays instead of dicts. Replaced `measure_bin_impacts` + `compute_saco_from_impacts` → `_measure_bin_drops`. Removed 5 dead fields, deleted attribution patterns block, removed double-save, renamed `_analyze_faithfulness_vs_correctness` → `_join_saco_with_correctness`. All tests pass including full-stack golden value test.
+- **WP-17/18 (analysis cleanup + unified outputs)**: Integrated as commit `a265419`, checkpoint `accepted/wp-17-18`. Unified experiment outputs to `results.json.metrics` for all 3 metrics (SaCo/FC/PF), unified `faithfulness_stats_*.json` with SaCo per-image scores and `images` metadata, and narrowed debug NPZ schema to case-study-required sparse fields.
+- **Post-WP18 path normalization decision**: canonical runtime paths are now `data/prepared/<dataset>/`, `data/runs/<run_name>/`, and `data/models/<dataset>/`. No symlink transition period is permitted.
+- **Examples policy update**: `src/gradcamfaith/examples/` is removed for now; no example maintenance surface during current cleanup phase.
+- **WP-19 (path normalization + cleanup)**: Implemented path migration in code/docs/tests (`*_unified` → `data/prepared/<dataset>`, run outputs to `data/runs`, checkpoints to `data/models`), removed example module and its smoke-contract test, and added opt-in raw source cleanup (`cleanup_source=True`) in `prepare_dataset_if_needed`. Local workspace directories were migrated to the new layout. Validation: `uv run pytest` passed (`13 passed, 3 skipped`).
 
 ## Tooling and Commands
 Preferred command style:
@@ -1589,7 +1593,6 @@ Keep command examples in docs using `uv` only.
 Full test coverage is still deferred, but baseline validation now exists. Each structural task must include:
 - Tier-1 smoke tests:
   - `uv run pytest tests/test_smoke_contracts.py tests/test_sweep_reproducibility.py`
-  - `uv run python -m gradcamfaith.examples.minimal_run --dry-run`
 - Git workflow audit:
   - `uv run python scripts/validation/git_workflow_audit.py`
 - Tier-2 heavy integration (opt-in on credentialed CUDA hosts):
@@ -1606,8 +1609,7 @@ At minimum, structural tasks must still include minimal smoke validation:
 2. Pipeline decomposition: split `pipeline.py` into model loading, runtime orchestration, and IO helpers.
 3. Data setup split: separate download and conversion concerns from `setup.py`.
 4. Experiment scripts migration: move sweep/SAE/comparison/case-study scripts under `experiments/`.
-5. Example path: add one minimal runnable example under `examples/`.
-6. Clarity pass: remove unused arguments/dead code and split oversized functions where this lowers cognitive load without behavior changes.
+5. Clarity pass: remove unused arguments/dead code and split oversized functions where this lowers cognitive load without behavior changes.
 7. Compatibility cleanup: keep shims until new paths are stable, then prune gradually.
 
 ## Workpackages For Team
@@ -1795,34 +1797,9 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Deliverables: package experiment modules, stable root shims, typo-safe comparison path, and updated AGENTS tracker.
 
 ### WP-05 Example Path
-- Goal: add one clear newcomer path for understanding and running the method.
-- In scope: `src/gradcamfaith/examples/minimal_run.py` and `src/gradcamfaith/examples/README.md`.
-- In scope: include exact `uv` commands, expected output artifacts, and an example config-first run.
-- Required example API shape in `minimal_run.py`:
-  - `ExampleConfig` (typed config object/dataclass for the example run)
-  - `run_example(config: ExampleConfig)` as primary callable
-  - `main()` as thin runner
-- Required behavior for the example:
-  - must import from package modules (`gradcamfaith.*`), not root compatibility wrappers
-  - must support a tiny-subset path for quick execution
-  - must emit a minimal run manifest (`resolved config`, `seed`, `timestamp`, `git SHA`) to align with reproducibility policy
-  - must document both modes:
-    - `explore`: editable config in file
-    - `paper`: frozen config reference path (even if placeholder for now)
-- Allowed file-change surface for WP-05:
-  - `src/gradcamfaith/examples/minimal_run.py` (new)
-  - `src/gradcamfaith/examples/README.md` (new)
-  - minimal import wiring only if required
-- Out of scope: full benchmark scripts.
-- Depends on: WP-02 minimum.
-- Acceptance checks: `uv run python -c "from gradcamfaith.examples.minimal_run import ExampleConfig, run_example, main; print('example-api-ok')"` remains valid.
-- Acceptance checks: one documented command executes the tiny-subset example path (or dry-run path if data is unavailable) and writes the expected manifest/artifact locations.
-- Acceptance checks: `README.md` includes exact `uv` commands and a short expected-output tree.
-- Required handoff artifacts in PR summary:
-  - exact command transcript used for smoke validation
-  - generated artifact tree (or dry-run artifact tree) with paths
-  - known limitations (e.g., required local data/model assets)
-- Deliverables: runnable example module, newcomer README, and reproducibility manifest path.
+- Status update: `superseded for current phase`.
+- Historical note: WP-05 delivered a runnable example path and dry-run manifest.
+- Current decision: examples are removed for now (`src/gradcamfaith/examples/` deleted) and no example API contract is active until a fresh design pass is requested.
 
 ### WP-06 Deep Clarity + Responsibility Refactor (No Logic Change)
 - Goal: make the code substantially easier to read by clarifying responsibility boundaries and reducing unnecessary surface area, without changing algorithmic behavior.
@@ -1915,8 +1892,13 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Complete WP-13 (I/O cleanup).
-2. Assess next priorities with maintainer:
+1. Validate path normalization end-to-end:
+   - prepared data under `data/prepared/<dataset>/`
+   - model checkpoints under `data/models/<dataset>/`
+   - runs under `data/runs/<run_name>/`
+2. Define and implement explicit raw-data cleanup policy after preparation (opt-in and reproducible).
+3. Keep archiving decisions deferred for now (`docs/`, `scripts/`, `tests/`, and AGENTS history).
+4. Continue pending refactors:
    - Sweep compression (resource lifecycle extraction to `models/`, deferred from WP-06D).
    - `case_studies.py` and `comparison.py` compression.
    - Debug accumulation cleanup in `experiments/pipeline.py` (~90 lines).
@@ -1926,5 +1908,12 @@ All workpackages below are designed for coder ownership and maintainer review.
 ## Done Criteria for This Rework
 - Core method code is isolated from experiment orchestration.
 - Experiment scripts are grouped and discoverable.
-- A newcomer can run one example and one experiment with documented `uv` commands.
+- A newcomer can run one experiment sweep with documented `uv` commands.
 - `AGENTS.md` reflects current structure and next planned steps at all times.
+
+## Current Decisions
+- Prepared dataset paths are canonicalized to `data/prepared/<dataset>/`.
+- Run output paths are canonicalized to `data/runs/<run_name>/` (replacing root `experiments/` output path).
+- Model checkpoints are canonicalized to `data/models/<dataset>/` (no symlink transition).
+- Examples are removed for now; no `src/gradcamfaith/examples/` maintenance.
+- Archiving strategy for `docs/`, `scripts/`, `tests/`, and AGENTS history is deferred.

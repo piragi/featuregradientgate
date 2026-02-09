@@ -111,7 +111,7 @@ COVIDQUEX_CONFIG = DatasetConfig(
         1: "Non-COVID",
         2: "Normal"
     },
-    model_checkpoint="./models/covidquex/covidquex_model.pth",
+    model_checkpoint="./data/models/covidquex/covidquex_model.pth",
     transform_fn=create_covidquex_transform
 )
 
@@ -136,7 +136,7 @@ HYPERKVASIR_CONFIG = DatasetConfig(
         4: "retroflex-stomach",
         5: "z-line"
     },
-    model_checkpoint="./models/hyperkvasir/hyperkvasir_vit_model.pth",
+    model_checkpoint="./data/models/hyperkvasir/hyperkvasir_vit_model.pth",
     transform_fn=create_hyperkvasir_transform
 )
 

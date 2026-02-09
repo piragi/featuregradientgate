@@ -35,9 +35,9 @@ def test_full_setup_downloads_assets():
 
     expected_paths = [
         Path("./data/hyperkvasir/labeled-images"),
-        Path("./models/hyperkvasir/hyperkvasir_vit_model.pth"),
+        Path("./data/models/hyperkvasir/hyperkvasir_vit_model.pth"),
         Path("./data/covidquex"),
-        Path("./models/covidquex/covidquex_model.pth"),
+        Path("./data/models/covidquex/covidquex_model.pth"),
         Path("./data/imagenet/raw/val"),
         Path("./data/imagenet/raw/test"),
         Path("./data/sae_hyperkvasir"),
@@ -141,9 +141,9 @@ def test_imagenet_golden_faithfulness_values(tmp_path):
         gated_dir = output_dir / "imagenet" / "layers_3_kappa_0.5_combined_clamp_10.0"
         assert gated_dir.exists(), f"Expected experiment directory not found: {gated_dir}"
 
-        # SaCo results (from results.json)
+        # SaCo summary (from results.json metrics)
         results_json = json.loads((gated_dir / "results.json").read_text())
-        saco = results_json["saco_results"]
+        saco = results_json["metrics"]["SaCo"]
 
         RTOL = 5e-3  # 0.5% — covers CUDA float non-determinism
 

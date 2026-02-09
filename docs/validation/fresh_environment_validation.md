@@ -3,7 +3,6 @@
 ## Goal
 Establish a repeatable validation flow before logic-changing work:
 - verify core APIs still load and match expected signatures
-- verify reproducibility metadata is written and seeds are preserved
 - verify sweep orchestration is deterministic under fixed seeds
 - verify branch/tag workflow follows `AGENTS.md`
 
@@ -16,13 +15,11 @@ Runs in a fresh checkout without datasets/models.
 uv sync
 uv run python scripts/validation/git_workflow_audit.py --json-output ./docs/validation/git_workflow_audit.json
 uv run pytest tests/test_smoke_contracts.py tests/test_sweep_reproducibility.py
-uv run python -m gradcamfaith.examples.minimal_run --dry-run
 ```
 
 Expected outcomes:
 - smoke tests pass
-- dry-run writes `experiments/example_run_<timestamp>/run_manifest.json`
-- manifest contains: `resolved_config`, `seed`, `timestamp`, `git_sha`, `environment_lock`
+- sweep contracts and reproducibility checks pass in mocked mode
 
 ### Tier 2: Full stack integration (opt-in, heavy)
 Runs real downloads and real sample sweep checks.
@@ -34,14 +31,14 @@ Prerequisites:
 
 ```bash
 # Optional explicit setup run
-uv run setup.py
+uv run python -m gradcamfaith.data.setup
 
 # Full integration tests (download + seeded sample sweep reproducibility)
 GRADCAMFAITH_RUN_FULL_STACK=1 uv run pytest -m integration tests/test_integration_fresh_env.py
 ```
 
 Expected outcomes:
-- asset download paths exist (`data/*`, `models/*`, SAE folders)
+- asset download paths exist (`data/*`, `data/models/*`, SAE folders)
 - two sample sweeps with the same seed produce identical normalized `results.json` payloads
 - changing seed produces a different normalized payload
 
@@ -49,7 +46,6 @@ Expected outcomes:
 Use `random_seed=42` as baseline in validation runs.
 
 Contract checks implemented:
-- `run_manifest.json` records `seed`
 - sweep configs record `random_seed`
 - reproducibility test compares normalized `results.json` payloads between two seeded runs
 

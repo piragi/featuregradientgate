@@ -98,7 +98,7 @@ def _extract_sae_activations(
 
     # Create dataloader
     print(f"Creating dataloader for {split} split...")
-    prepared_path = Path(f"./data/{dataset_name}_unified")
+    prepared_path = Path(f"./data/prepared/{dataset_name}")
     dataset_loader = create_dataloader(dataset_name=dataset_name, data_path=prepared_path)
 
     # Get image list

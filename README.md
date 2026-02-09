@@ -30,7 +30,7 @@ uvx hf auth login
 Run the setup script:
 
 ```bash
-uv run setup.py
+uv run python -m gradcamfaith.data.setup
 ```
 
 This will download all datasets, models, and SAE checkpoints.
@@ -42,8 +42,10 @@ This will download all datasets, models, and SAE checkpoints.
 Run the main experiment sweep:
 
 ```bash
-uv run main.py
+uv run python -m gradcamfaith.experiments.sweep
 ```
+
+Sweep outputs are written under `./data/runs/`.
 
 ### Datasets
 

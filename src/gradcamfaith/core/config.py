@@ -9,7 +9,7 @@ Modes = Literal["train", "test", "val", "dev"]
 class FileConfig:
     """Configuration for file paths and I/O operations."""
     dataset_name: str = "hyperkvasir"
-    base_pipeline_dir: Path = field(default_factory=lambda: Path("./data/hyperkvasir_unified/results"))
+    base_pipeline_dir: Path = field(default_factory=lambda: Path("./data/prepared/hyperkvasir/results"))
     current_mode: Modes = "test"
 
     output_suffix: str = ""
@@ -70,7 +70,7 @@ class FileConfig:
         """Create a FileConfig for the given dataset with default paths."""
         return cls(
             dataset_name=dataset_name,
-            base_pipeline_dir=Path(f"./data/{dataset_name}_unified/results"),
+            base_pipeline_dir=Path(f"./data/prepared/{dataset_name}/results"),
             **kwargs,
         )
 

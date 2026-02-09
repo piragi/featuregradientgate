@@ -339,7 +339,7 @@ def run_single_experiment(
             config=pipeline_config,
             dataset_name=dataset_name,
             source_data_path=source_path,
-            prepared_data_path=Path(f"./data/{dataset_name}_unified/"),
+            prepared_data_path=Path(f"./data/prepared/{dataset_name}/"),
             force_prepare=False,
             subset_size=subset_size,
             random_seed=random_seed,
@@ -389,7 +389,7 @@ def run_parameter_sweep(
         shuffle_decoder_options: List of shuffle decoder options (True/False)
         clamp_max_values: List of maximum gate values (gate range: [1/clamp_max, clamp_max])
         current_mode: Dataset split to use ("train", "val", "test", "dev")
-        debug_mode: If True, collect sparse features, gradients, and gate values per image
+        debug_mode: If True, collect sparse features and attribution deltas per image
         output_base_dir: Base directory for output (auto-generated if None)
         subset_size: Number of images per dataset (None for all)
         random_seed: Random seed for reproducibility
@@ -399,7 +399,7 @@ def run_parameter_sweep(
     """
     if output_base_dir is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_base_dir = Path(f"./experiments/feature_gradient_sweep_{timestamp}")
+        output_base_dir = Path(f"./data/runs/feature_gradient_sweep_{timestamp}")
     output_base_dir.mkdir(parents=True, exist_ok=True)
 
     sweep_config = {

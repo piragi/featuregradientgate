@@ -52,7 +52,7 @@ def run_unified_pipeline(
         model: Pre-loaded model
         steering_resources: Pre-loaded SAE resources
         clip_classifier: Pre-loaded CLIP classifier (None for non-CLIP models)
-        prepared_data_path: Path for prepared data (default: ./data/{dataset_name}_unified)
+        prepared_data_path: Path for prepared data (default: ./data/prepared/{dataset_name})
         device: Device to use
         force_prepare: Force re-preparation of dataset
         subset_size: If specified, only use this many random images
@@ -74,7 +74,7 @@ def run_unified_pipeline(
 
     # Prepare dataset if needed
     if prepared_data_path is None:
-        prepared_data_path = Path(f"./data/{dataset_name}_unified")
+        prepared_data_path = Path(f"./data/prepared/{dataset_name}")
 
     prepared_path = prepare_dataset_if_needed(
         dataset_name=dataset_name,

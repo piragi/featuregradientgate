@@ -1,4 +1,5 @@
 """Data setup: download orchestration and dataset preparation."""
+import shutil
 import sys
 from pathlib import Path
 
@@ -23,7 +24,9 @@ def prepare_dataset_if_needed(
         source_path: Path to raw dataset
         prepared_path: Path where prepared dataset should be
         force_prepare: If True, force re-preparation even if exists
-        **converter_kwargs: Additional arguments for converter
+        **converter_kwargs: Additional arguments for converter.
+            Special option: cleanup_source=True removes the raw source directory
+            after successful conversion.
 
     Returns:
         Path to prepared dataset
@@ -36,16 +39,38 @@ def prepare_dataset_if_needed(
 
     print(f"Preparing {dataset_name} dataset...")
     print("Images will be preprocessed to 224x224")
+    cleanup_source = bool(converter_kwargs.pop("cleanup_source", False))
+
     convert_dataset(dataset_name=dataset_name, source_path=source_path, output_path=prepared_path, **converter_kwargs)
+
+    if cleanup_source:
+        _cleanup_source_after_prepare(source_path=source_path, prepared_path=prepared_path)
 
     return prepared_path
 
 
+def _cleanup_source_after_prepare(source_path: Path, prepared_path: Path):
+    """Safely remove raw source directory after successful preparation."""
+    source = source_path.resolve()
+    prepared = prepared_path.resolve()
+
+    if not source.exists():
+        return
+
+    if source == prepared or prepared.is_relative_to(source):
+        raise ValueError(
+            f"Refusing to clean source path {source} because prepared path {prepared} is inside it."
+        )
+
+    print(f"Cleaning up raw source directory: {source}")
+    shutil.rmtree(source)
+
+
 def main():
     """Main function to orchestrate all downloads."""
-    data_dir, models_dir = Path("./data"), Path("./models")
+    data_dir, models_dir = Path("./data"), Path("./data/models")
     data_dir.mkdir(exist_ok=True)
-    models_dir.mkdir(exist_ok=True)
+    models_dir.mkdir(exist_ok=True, parents=True)
 
     print("Dataset & Model Setup")
     print("=" * 50)

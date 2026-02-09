@@ -1,7 +1,7 @@
 """
 Unified DataLoader Module
 
-This module provides a simple, unified interface for loading medical imaging datasets
+This module provides a simple interface for loading prepared medical imaging datasets
 that have been converted to the standard format using dataset_converters.py.
 
 Uses PyTorch's built-in ImageFolder for simplicity and reliability.
@@ -18,7 +18,7 @@ from gradcamfaith.data.dataset_config import DatasetConfig, get_dataset_config
 
 class UnifiedMedicalDataset:
     """
-    Unified dataset loader for medical imaging datasets.
+    Dataset loader for prepared medical imaging datasets.
     
     This class provides a simple interface to load datasets that have been
     converted to the standard format (class folders within train/val/test).
@@ -30,7 +30,7 @@ class UnifiedMedicalDataset:
         dataset_config: DatasetConfig,
     ):
         """
-        Initialize the unified dataset loader.
+        Initialize the dataset loader.
         
         Args:
             data_path: Path to the prepared dataset (containing train/val/test folders)
@@ -163,7 +163,7 @@ def create_dataloader(
     data_path: Path
 ) -> UnifiedMedicalDataset:
     """
-    Convenience helper to build the unified dataset wrapper for a given dataset.
+    Convenience helper to build the dataset wrapper for a given dataset.
 
     Args:
         dataset_name: Name of the dataset (e.g., 'covidquex', 'hyperkvasir', 'imagenet')
