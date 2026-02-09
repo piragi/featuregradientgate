@@ -1,7 +1,9 @@
 """
-Qualitative Case Study Analysis
-Traces improvements in top-performing images back to specific features and their semantics.
-Includes integrated SAE activation extraction functionality.
+Qualitative Case Study Analysis.
+
+Traces improvements in top-performing images back to specific SAE features
+and their semantics. Identifies which features boosted or suppressed attribution
+in top-improved images, and visualizes feature prototypes from a reference set.
 """
 
 import json
@@ -13,238 +15,62 @@ import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import torch
 from PIL import Image
-from tqdm import tqdm
 
-# ==================== SAE Activation Extraction ====================
+from gradcamfaith.models.sae_extraction import extract_sae_activations_if_needed  # noqa: F401
 
 
-def extract_sae_activations_if_needed(
-    dataset_name: str,
-    layers: List[int],
-    split: str = 'val',
-    output_dir: Optional[Path] = None,
-    subset_size: Optional[int] = None,
-    use_clip: bool = True
-) -> Path:
+def _patch_grid(n_patches: int) -> Tuple[int, int]:
+    """Derive (patches_per_side, patch_size) from total patch count."""
+    patches_per_side = int(np.sqrt(n_patches))
+    patch_size = 224 // patches_per_side
+    return patches_per_side, patch_size
+
+
+def _patch_coords(patch_idx: int, patches_per_side: int, patch_size: int) -> Tuple[int, int]:
+    """Convert linear patch index to (x, y) pixel coordinates."""
+    row = patch_idx // patches_per_side
+    col = patch_idx % patches_per_side
+    return col * patch_size, row * patch_size
+
+
+def _save_attribution_overlay(
+    img_array: np.ndarray,
+    save_path: Path,
+    attribution: Optional[np.ndarray] = None,
+    highlight: Optional[Tuple[int, int, int, int]] = None,
+    highlight_color: str = 'lime',
+    highlight_linewidth: int = 3,
+    title: Optional[str] = None,
+):
+    """Save image with optional attribution heatmap overlay and patch highlight.
+
+    Args:
+        highlight: (x, y, width, height) rectangle to draw, or None.
     """
-    Extract SAE activations if they don't already exist.
-
-    Returns path to the activations directory (whether extracted or already existing).
-    """
-    if output_dir is None:
-        output_dir = Path(f"./sae_activations/{dataset_name}_{split}")
-
-    # Check if activations already exist
-    debug_dir = output_dir / "debug"
-    metadata_file = output_dir / "extraction_metadata.json"
-
-    if debug_dir.exists() and metadata_file.exists():
-        # Check if all layer files exist
-        all_exist = all((debug_dir / f"layer_{layer_idx}_activations.npz").exists() for layer_idx in layers)
-
-        if all_exist:
-            print(f"Activation files already exist in {output_dir}")
-            print("Skipping extraction. Delete the directory to force re-extraction.")
-            return output_dir
-
-    # Files don't exist, run extraction
-    print(f"Activation files not found. Extracting from {split} split...")
-    return _extract_sae_activations(
-        dataset_name=dataset_name,
-        layers=layers,
-        split=split,
-        output_dir=output_dir,
-        subset_size=subset_size,
-        use_clip=use_clip
-    )
-
-
-def _extract_sae_activations(
-    dataset_name: str, layers: List[int], split: str, output_dir: Path, subset_size: Optional[int], use_clip: bool
-) -> Path:
-    """
-    Internal function to extract SAE activations.
-    Extracted and streamlined from extract_sae_activations.py.
-    """
-    import gradcamfaith.core.config as config
-    from gradcamfaith.data.dataset_config import get_dataset_config
-    from gradcamfaith.models.load import load_model_for_dataset
-    from gradcamfaith.models.sae_resources import load_steering_resources
-    from gradcamfaith.data.dataloader import create_dataloader, get_single_image_loader
-
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Load dataset config and model
-    dataset_config = get_dataset_config(dataset_name)
-    print(f"Dataset: {dataset_name} ({dataset_config.num_classes} classes)")
-
-    temp_config = config.PipelineConfig()
-    temp_config.file = config.FileConfig.for_dataset(dataset_name)
-    if use_clip:
-        temp_config.classify.use_clip = True
-        temp_config.classify.clip_model_name = "open-clip:laion/CLIP-ViT-B-32-DataComp.XL-s13B-b90K"
-
-    print(f"Loading model for {dataset_name}...")
-    model, clip_classifier = load_model_for_dataset(dataset_config, device, temp_config)
-    model.eval()
-
-    # Load SAEs
-    print(f"Loading SAE resources for layers: {layers}")
-    steering_resources = load_steering_resources(layers, dataset_name=dataset_name)
-
-    # Create dataloader
-    print(f"Creating dataloader for {split} split...")
-    prepared_path = Path(f"./data/{dataset_name}_unified")
-    dataset_loader = create_dataloader(dataset_name=dataset_name, data_path=prepared_path)
-
-    # Get image list
-    image_data = list(dataset_loader.get_numeric_samples(split))
-    total_samples = len(image_data)
-
-    if subset_size is not None and subset_size < total_samples:
-        import random
-        random.seed(42)
-        image_data = random.sample(image_data, subset_size)
-        print(f"Processing {len(image_data)} randomly selected images (subset of {total_samples})")
-    else:
-        print(f"Processing all {total_samples} images")
-
-    # Initialize storage and checkpointing
-    checkpoint_interval = 10000
-    layer_data = {layer_idx: {'sparse_indices': [], 'sparse_activations': []} for layer_idx in layers}
-    debug_dir = output_dir / "debug"
-    debug_dir.mkdir(exist_ok=True, parents=True)
-
-    print(f"\nExtracting SAE activations (saving every {checkpoint_interval} images)...")
-
-    # Process images
-    for img_idx, (image_path, label) in enumerate(tqdm(image_data, desc="Processing images")):
-        try:
-            input_tensor = get_single_image_loader(image_path, dataset_config, use_clip=use_clip)
-            input_tensor = input_tensor.to(device)
-
-            # Setup hooks to capture residuals
-            residuals = {}
-
-            def save_resid_hook(tensor, hook):
-                layer_idx = int(hook.name.split('.')[1])
-                if layer_idx in layers:
-                    residuals[layer_idx] = tensor.detach().cpu()
-                return tensor
-
-            fwd_hooks = [(f"blocks.{layer_idx}.hook_resid_post", save_resid_hook) for layer_idx in layers]
-
-            # Forward pass
-            with torch.no_grad():
-                with model.hooks(fwd_hooks=fwd_hooks, reset_hooks_end=True):
-                    _ = model(input_tensor)
-
-            # Encode residuals with SAE
-            for layer_idx in layers:
-                if layer_idx not in residuals:
-                    continue
-
-                resid = residuals[layer_idx].to(device)
-                sae = steering_resources[layer_idx]['sae']
-
-                with torch.no_grad():
-                    _, codes = sae.encode(resid)
-
-                # Remove batch and CLS token
-                codes = codes.cpu()
-                if codes.dim() == 3:
-                    codes = codes[0]
-                codes = codes[1:]  # Remove CLS
-
-                # Convert to sparse format
-                active_threshold = config.BoostingConfig.active_feature_threshold
-                sparse_indices_per_patch = []
-                sparse_activations_per_patch = []
-
-                for patch_idx in range(codes.shape[0]):
-                    patch_codes = codes[patch_idx]
-                    active_mask = patch_codes > active_threshold
-                    sparse_indices_per_patch.append(torch.where(active_mask)[0].numpy())
-                    sparse_activations_per_patch.append(patch_codes[active_mask].numpy())
-
-                layer_data[layer_idx]['sparse_indices'].append(sparse_indices_per_patch)
-                layer_data[layer_idx]['sparse_activations'].append(sparse_activations_per_patch)
-
-        except Exception as e:
-            print(f"Error processing {image_path.name}: {e}")
-            continue
-
-        # Save checkpoints
-        if (img_idx + 1) % checkpoint_interval == 0 or (img_idx + 1) == len(image_data):
-            for layer_idx in layers:
-                checkpoint_file = debug_dir / f"layer_{layer_idx}_checkpoint_{img_idx + 1}.npz"
-                np.savez_compressed(
-                    checkpoint_file,
-                    sparse_indices=np.array(layer_data[layer_idx]['sparse_indices'], dtype=object),
-                    sparse_activations=np.array(layer_data[layer_idx]['sparse_activations'], dtype=object)
-                )
-            layer_data = {layer_idx: {'sparse_indices': [], 'sparse_activations': []} for layer_idx in layers}
-            torch.cuda.empty_cache()
-
-    # Merge checkpoints
-    print("\nMerging checkpoint files...")
-    for layer_idx in layers:
-        checkpoint_files = sorted(debug_dir.glob(f"layer_{layer_idx}_checkpoint_*.npz"))
-        all_indices, all_activations = [], []
-
-        for checkpoint_file in checkpoint_files:
-            data = np.load(checkpoint_file, allow_pickle=True)
-            all_indices.extend(data['sparse_indices'])
-            all_activations.extend(data['sparse_activations'])
-
-        output_file = debug_dir / f"layer_{layer_idx}_activations.npz"
-        np.savez_compressed(
-            output_file,
-            sparse_indices=np.array(all_indices, dtype=object),
-            sparse_activations=np.array(all_activations, dtype=object)
+    plt.figure(figsize=(6, 6))
+    ax = plt.gca()
+    ax.imshow(img_array)
+    if attribution is not None:
+        ax.imshow(attribution, cmap='jet', alpha=0.3, interpolation='bilinear')
+    if highlight is not None:
+        hx, hy, hw, hh = highlight
+        rect = mpatches.Rectangle(
+            (hx, hy), hw, hh, linewidth=highlight_linewidth,
+            edgecolor=highlight_color, facecolor='none'
         )
-        print(f"  Layer {layer_idx}: Merged {len(all_indices)} images")
-
-        # Cleanup checkpoints
-        for checkpoint_file in checkpoint_files:
-            checkpoint_file.unlink()
-
-    # Save metadata
-    metadata = {
-        'dataset_name': dataset_name,
-        'split': split,
-        'layers': layers,
-        'n_images': len(image_data),
-        'use_clip': use_clip,
-        'image_paths': {
-            idx: str(image_path)
-            for idx, (image_path, label) in enumerate(image_data)
-        }
-    }
-
-    with open(output_dir / "extraction_metadata.json", 'w') as f:
-        json.dump(metadata, f, indent=2)
-
-    print(f"\nExtraction complete! Saved to {output_dir}")
-
-    # Cleanup
-    del model
-    if clip_classifier is not None:
-        del clip_classifier
-    for layer_idx, resources in steering_resources.items():
-        if 'sae' in resources:
-            del resources['sae']
-    torch.cuda.empty_cache()
-
-    return output_dir
+        ax.add_patch(rect)
+    if title:
+        ax.set_title(title, fontsize=14, fontweight='bold')
+    ax.axis('off')
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
 
 
-# ==================== Image Loading and Preprocessing ====================
+def _zscore(series: pd.Series) -> pd.Series:
+    """Normalize series to zero mean, unit variance."""
+    return (series - series.mean()) / (series.std() + 1e-9)
 
 
 def load_and_preprocess_image(image_path: Path, dataset_config) -> np.ndarray:
@@ -278,38 +104,59 @@ def load_and_preprocess_image(image_path: Path, dataset_config) -> np.ndarray:
 
 
 def load_faithfulness_results(path: Path) -> pd.DataFrame:
-    """Load faithfulness results from experiment directory."""
-    saco_csv_file = list(path.glob("analysis_faithfulness_correctness_*.csv"))
-    if not saco_csv_file:
-        raise FileNotFoundError(f"No SaCo faithfulness CSV found in {path}")
+    """Load per-image faithfulness results from experiment directory.
 
-    df = pd.read_csv(saco_csv_file[0])
-
-    # Load additional metrics
+    Reads from the unified ``faithfulness_stats_*.json`` which contains
+    per-image scores for all 3 metrics (SaCo, FaithfulnessCorrelation,
+    PixelFlipping) and per-image classification metadata (``images`` array).
+    """
     faithfulness_json = list(path.glob("faithfulness_stats_*.json"))
-    if faithfulness_json:
-        with open(faithfulness_json[0], 'r') as f:
-            faithfulness_stats = json.load(f)
-        metrics = faithfulness_stats.get('metrics', {})
+    if not faithfulness_json:
+        raise FileNotFoundError(f"No faithfulness stats JSON found in {path}")
 
-        for metric_name, metric_data in metrics.items():
-            df[metric_name] = metric_data['mean_scores']
+    with open(faithfulness_json[0], 'r') as f:
+        stats = json.load(f)
+
+    # Build DataFrame from per-image metadata
+    images = stats.get('images', [])
+    if images:
+        df = pd.DataFrame(images)
+    else:
+        # Fallback: no per-image metadata, create minimal frame
+        n_images = 0
+        for m in stats.get('metrics', {}).values():
+            if 'mean_scores' in m:
+                n_images = len(m['mean_scores'])
+                break
+        df = pd.DataFrame({'image_idx': range(n_images)})
+
+    # Add per-image metric scores
+    for metric_name, metric_data in stats.get('metrics', {}).items():
+        if 'mean_scores' in metric_data:
+            scores = metric_data['mean_scores']
+            if metric_name == 'SaCo':
+                df['saco_score'] = scores
+            else:
+                df[metric_name] = scores
 
     # Extract image index from filename
-    if 'filename' in df.columns:
+    if 'filename' in df.columns and 'image_idx' not in df.columns:
         df['image_idx'] = df['filename'].str.extract(r'_(\d+)\.(?:jpeg|png)$')[0].astype(int)
-    else:
+    elif 'image_idx' not in df.columns:
         df['image_idx'] = range(len(df))
 
     return df
 
 
 def load_debug_data(path: Path, layers: Optional[List[int]] = None) -> Dict[int, Dict[str, np.ndarray]]:
-    """Load debug data containing feature activations and contributions.
+    """Load debug data containing sparse feature data and attribution deltas.
 
     Args:
         path: Path to experiment directory
         layers: Optional list of specific layers to load. If None, loads all layers.
+
+    Expected NPZ keys (WP-18 format):
+        patch_attribution_deltas, sparse_indices, sparse_activations, sparse_contributions
     """
     debug_dir = path / "debug"
     if not debug_dir.exists():
@@ -323,7 +170,6 @@ def load_debug_data(path: Path, layers: Optional[List[int]] = None) -> Dict[int,
     for debug_file in sorted(debug_files):
         layer_idx = int(debug_file.stem.split('_')[1])
 
-        # Skip if not in requested layers
         if layers is not None and layer_idx not in layers:
             continue
 
@@ -332,10 +178,8 @@ def load_debug_data(path: Path, layers: Optional[List[int]] = None) -> Dict[int,
         debug_data[layer_idx] = {
             'sparse_indices': data['sparse_indices'],
             'sparse_activations': data['sparse_activations'],
-            'sparse_gradients': data['sparse_gradients'],
-            'sparse_contributions': data.get('sparse_contributions', None),
-            'gate_values': data['gate_values'],
-            'patch_attribution_deltas': data.get('patch_attribution_deltas', None),
+            'sparse_contributions': data['sparse_contributions'],
+            'patch_attribution_deltas': data['patch_attribution_deltas'],
         }
 
         print(f"  Layer {layer_idx}: {len(debug_data[layer_idx]['sparse_indices'])} images")
@@ -450,7 +294,7 @@ def build_feature_activation_index(
     return dict(feature_index)
 
 
-def compute_composite_improvement(vanilla_df: pd.DataFrame, gated_df: pd.DataFrame) -> pd.DataFrame:
+def compute_per_image_improvement(vanilla_df: pd.DataFrame, gated_df: pd.DataFrame) -> pd.DataFrame:
     """Compute composite improvement score from multiple metrics."""
     improvements = gated_df[['image_idx']].copy()
 
@@ -459,12 +303,9 @@ def compute_composite_improvement(vanilla_df: pd.DataFrame, gated_df: pd.DataFra
     improvements['delta_faith'] = gated_df['FaithfulnessCorrelation'] - vanilla_df['FaithfulnessCorrelation']
     improvements['delta_pixel'] = gated_df['PixelFlipping'] - vanilla_df['PixelFlipping']
 
-    # Z-score normalization
-    z_score = lambda series: (series - series.mean()) / (series.std() + 1e-9)
-
     improvements['composite_improvement'] = (
-        z_score(improvements['delta_saco']) + z_score(improvements['delta_faith']) +
-        -z_score(improvements['delta_pixel'])  # Lower is better for pixel flipping
+        _zscore(improvements['delta_saco']) + _zscore(improvements['delta_faith']) +
+        -_zscore(improvements['delta_pixel'])  # Lower is better for pixel flipping
     ) / 3
 
     return improvements
@@ -495,28 +336,20 @@ def find_dominant_features_in_image(
     sparse_contributions = debug_data[layer_idx]['sparse_contributions'][debug_idx]
     layer_patch_deltas = debug_data[layer_idx]['patch_attribution_deltas'][debug_idx]
 
-    # Detect patch configuration from debug data
     n_patches = len(layer_patch_deltas)
-    patches_per_side = int(np.sqrt(n_patches))
-    patch_size = 224 // patches_per_side  # 224/14=16 for B/16, 224/7=32 for B/32
+    patches_per_side, patch_size = _patch_grid(n_patches)
 
     final_patch_deltas = []
-    for patch_idx in range(n_patches):
-        row_idx = patch_idx // patches_per_side
-        col_idx = patch_idx % patches_per_side
-        y, x = row_idx * patch_size, col_idx * patch_size
-
+    for p_idx in range(n_patches):
+        x, y = _patch_coords(p_idx, patches_per_side, patch_size)
         vanilla_patch_val = vanilla_attr[y:y + patch_size, x:x + patch_size].mean()
         gated_patch_val = gated_attr[y:y + patch_size, x:x + patch_size].mean()
-        final_delta = gated_patch_val - vanilla_patch_val
-        final_patch_deltas.append(final_delta)
+        final_patch_deltas.append(gated_patch_val - vanilla_patch_val)
 
     final_patch_deltas = np.array(final_patch_deltas)
 
     # Find patches with largest absolute FINAL attribution changes
-    patch_rankings = [(i, abs(delta)) for i, delta in enumerate(final_patch_deltas)]
-    patch_rankings.sort(key=lambda x: x[1], reverse=True)
-    top_patch_indices = [idx for idx, _ in patch_rankings[:n_top_patches]]
+    top_patch_indices = np.argsort(np.abs(final_patch_deltas))[::-1][:n_top_patches]
 
     dominant_features = []
     skipped_reasons = {'negligible_delta': 0, 'no_features': 0, 'no_matching_direction': 0}
@@ -537,23 +370,13 @@ def find_dominant_features_in_image(
             continue
 
         # Find feature with strongest contribution in matching direction
-        # Use FINAL delta to determine boost vs suppress
-        if final_delta > 0:
-            # Boosted patch - find max positive contributor
-            pos_contribs = [(i, c) for i, c in enumerate(patch_contributions) if c > 0]
-            if not pos_contribs:
-                skipped_reasons['no_matching_direction'] += 1
-                continue
-            best_idx, best_contrib = max(pos_contribs, key=lambda x: x[1])
-            role = "BOOST"
-        else:
-            # Suppressed patch - find max negative (most negative) contributor
-            neg_contribs = [(i, c) for i, c in enumerate(patch_contributions) if c < 0]
-            if not neg_contribs:
-                skipped_reasons['no_matching_direction'] += 1
-                continue
-            best_idx, best_contrib = min(neg_contribs, key=lambda x: x[1])
-            role = "SUPPRESS"
+        sign = np.sign(final_delta)
+        matching = [(i, c) for i, c in enumerate(patch_contributions) if np.sign(c) == sign]
+        if not matching:
+            skipped_reasons['no_matching_direction'] += 1
+            continue
+        best_idx, best_contrib = max(matching, key=lambda x: x[1] * sign)
+        role = "BOOST" if sign > 0 else "SUPPRESS"
 
         feature_idx = int(patch_features[best_idx])
 
@@ -593,7 +416,7 @@ def extract_case_studies(
     Returns a DataFrame with one row per (image, patch, feature) combination.
     """
     # Compute improvements
-    improvements = compute_composite_improvement(vanilla_faithfulness, gated_faithfulness)
+    improvements = compute_per_image_improvement(vanilla_faithfulness, gated_faithfulness)
     improvements = improvements.merge(
         gated_faithfulness[['image_idx', 'predicted_class', 'true_class', 'is_correct']], on='image_idx'
     )
@@ -658,344 +481,44 @@ def extract_case_studies(
     return case_studies_df
 
 
-def visualize_case_study(
-    case: pd.Series,
-    feature_index: Dict[int, List[Tuple[int, int, float]]],
+def _save_prototype_images(
+    top_activations: List[Tuple[int, int, float]],
     debug_to_image_idx: Dict[int, int],
-    debug_data: Dict[int, Dict[str, np.ndarray]],
-    dataset_config,
-    case_study_image_dir: Path,
+    prototype_path_mapping: Optional[Dict[int, Path]],
     prototype_image_dir: Path,
-    vanilla_attribution_dir: Path,
-    gated_attribution_dir: Path,
-    output_dir: Path,
-    n_prototypes: int = 10,
-    prototype_path_mapping: Optional[Dict[int, Path]] = None
-):
-    """
-    Visualize a single case study with feature prototypes.
-
-    Creates a figure showing:
-    1. The improved image with vanilla/gated attributions (from case study set)
-    2. Top-K activating patches for the dominant feature (from prototype set)
-
-    Args:
-        debug_to_image_idx: Mapping from debug array index to actual image_idx for prototypes
-        case_study_image_dir: Directory containing case study images (test set)
-        prototype_image_dir: Directory containing prototype images (test or validation set)
-    """
-    img_idx = case['image_idx']
-    feature_idx = case['feature_idx']
-    layer_idx = case['layer_idx']
-
-    # Get case study image path (always from test set)
-    image_path = get_image_path(img_idx, case_study_image_dir)
-
-    if not image_path or not image_path.exists():
-        print(f"Warning: Image {img_idx} not found")
-        return
-
-    # Load attributions
-    vanilla_attr = load_attribution(img_idx, vanilla_attribution_dir)
-    gated_attr = load_attribution(img_idx, gated_attribution_dir)
-
-    if vanilla_attr is None or gated_attr is None:
-        print(f"Warning: Attributions not found for image {img_idx}")
-        return
-
-    # Get top activating examples for this feature (debug_idx from index)
-    if feature_idx not in feature_index:
-        print(f"Warning: Feature {feature_idx} not in index")
-        return
-
-    top_activations = feature_index[feature_idx][:n_prototypes]
-
-    # Create figure
-    n_cols = 4
-    n_rows = 2 + (len(top_activations) + n_cols - 1) // n_cols
-    fig = plt.figure(figsize=(n_cols * 3, n_rows * 3))
-    gs = fig.add_gridspec(n_rows, n_cols, hspace=0.3, wspace=0.3)
-
-    # Load and preprocess main image (same as model input)
-    main_img_array = load_and_preprocess_image(image_path, dataset_config)
-    if main_img_array is None:
-        print(f"Warning: Could not load main image {image_path}")
-        return
-
-    # Row 1: Vanilla attribution
-    ax1 = fig.add_subplot(gs[0, :2])
-    ax1.imshow(main_img_array)
-    vanilla_norm = (vanilla_attr - vanilla_attr.min()) / (vanilla_attr.max() - vanilla_attr.min() + 1e-8)
-    ax1.imshow(vanilla_norm, cmap='jet', alpha=0.3, interpolation='bilinear')
-    ax1.axis('off')
-
-    # Row 1: Gated attribution with patch highlight
-    ax2 = fig.add_subplot(gs[0, 2:])
-    ax2.imshow(main_img_array)
-    gated_norm = (gated_attr - gated_attr.min()) / (gated_attr.max() - gated_attr.min() + 1e-8)
-    ax2.imshow(gated_norm, cmap='jet', alpha=0.3, interpolation='bilinear')
-
-    # Highlight the patch
-    # Detect patch configuration from the data (need to load one debug sample)
-    # We can infer from the attribution map size
-    patch_idx = case['patch_idx']
-    layer_idx = case['layer_idx']
-
-    # Infer patch grid from layer_idx in debug data
-    # Quick hack: load a sample to detect size
-    sample_deltas = debug_data[layer_idx]['patch_attribution_deltas'][0]
-    n_patches = len(sample_deltas)
-    patches_per_side = int(np.sqrt(n_patches))
-    patch_size = 224 // patches_per_side
-
-    row_idx = patch_idx // patches_per_side
-    col_idx = patch_idx % patches_per_side
-    x, y = col_idx * patch_size, row_idx * patch_size
-
-    # Color based on role
-    color = 'lime' if case['role'] == 'BOOST' else 'red'
-    rect = mpatches.Rectangle((x, y), patch_size, patch_size, linewidth=3, edgecolor=color, facecolor='none')
-    ax2.add_patch(rect)
-
-    # Add text showing the attribution change
-    final_delta = case['final_patch_delta']
-    ax2.set_title(f"{case['role']} patch, Final \u0394: {final_delta:.3f}", fontsize=11, fontweight='bold')
-    ax2.axis('off')
-
-    # Row 2: Info text
-    ax_info = fig.add_subplot(gs[1, :])
-    ax_info.axis('off')
-    info_text = (
-        f"Image {img_idx} | Layer {layer_idx} | Feature {feature_idx}\n"
-        f"Composite Improvement: {case['composite_improvement']:.3f} | "
-        f"\u0394SaCo: {case['delta_saco']:.4f} | \u0394Faith: {case['delta_faith']:.4f}\n"
-        f"Final Attribution \u0394: {case['final_patch_delta']:.4f} ({case['role']}) | "
-        f"Layer {layer_idx} CAM \u0394: {case['layer_patch_delta']:.4f}\n"
-        f"Feature Contribution: {case['contribution']:.4f}"
-    )
-    ax_info.text(
-        0.5,
-        0.5,
-        info_text,
-        ha='center',
-        va='center',
-        fontsize=9,
-        family='monospace',
-        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5)
-    )
-
-    # Remaining rows: Feature prototypes
-    for proto_idx, (proto_debug_idx, proto_patch_idx, proto_activation) in enumerate(top_activations):
-        row = 2 + proto_idx // n_cols
-        col = proto_idx % n_cols
-        ax = fig.add_subplot(gs[row, col])
-
-        # Convert debug_idx to actual image_idx for file lookup
-        proto_img_idx = debug_to_image_idx.get(proto_debug_idx)
-        if proto_img_idx is None:
-            ax.text(0.5, 0.5, f"Debug idx {proto_debug_idx}\nmapping missing", ha='center', va='center')
-            ax.axis('off')
-            continue
-
-        # Load prototype image (from validation or test set depending on configuration)
-        if prototype_path_mapping is not None:
-            # Use direct path mapping (for validation set with complex structure)
-            proto_img_path = prototype_path_mapping.get(proto_debug_idx)
-            if proto_img_path is None:
-                ax.text(0.5, 0.5, f"Path not found\nfor idx {proto_debug_idx}", ha='center', va='center')
-                ax.axis('off')
-                continue
-        else:
-            # Test set has simple structure
-            proto_img_path = get_image_path(proto_img_idx, prototype_image_dir)
-
-        # Load and preprocess prototype image (same as model input)
-        proto_img_array = load_and_preprocess_image(proto_img_path, dataset_config)
-
-        if proto_img_array is not None:
-            ax.imshow(proto_img_array)
-
-            # Highlight the activating patch (use same patch grid as main image)
-            proto_row = proto_patch_idx // patches_per_side
-            proto_col = proto_patch_idx % patches_per_side
-            proto_x = proto_col * patch_size
-            proto_y = proto_row * patch_size
-
-            rect = mpatches.Rectangle((proto_x, proto_y),
-                                      patch_size,
-                                      patch_size,
-                                      linewidth=2,
-                                      edgecolor='yellow',
-                                      facecolor='none')
-            ax.add_patch(rect)
-
-            ax.set_title(f"#{proto_idx+1}: Act={proto_activation:.2f}", fontsize=9)
-        else:
-            ax.text(0.5, 0.5, f"Image {proto_img_idx}\nnot found", ha='center', va='center')
-
-        ax.axis('off')
-
-    # Main title
-    fig.suptitle(f"Case Study: Feature {feature_idx} {case['role']}ing Attribution", fontsize=14, fontweight='bold')
-
-    # Save
-    output_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"case_img{img_idx}_layer{layer_idx}_feat{feature_idx}_{case['role'].lower()}.png"
-    plt.savefig(output_dir / filename, dpi=150, bbox_inches='tight')
-    plt.close()
-
-    print(f"  Saved: {filename}")
-
-
-def save_case_study_individual_images(
-    case: pd.Series,
-    feature_index: Dict[int, List[Tuple[int, int, float]]],
-    debug_to_image_idx: Dict[int, int],
-    debug_data: Dict[int, Dict[str, np.ndarray]],
     dataset_config,
-    case_study_image_dir: Path,
-    prototype_image_dir: Path,
-    vanilla_attribution_dir: Path,
-    gated_attribution_dir: Path,
-    output_dir: Path,
-    n_prototypes: int = 10,
-    prototype_path_mapping: Optional[Dict[int, Path]] = None
-):
-    """
-    Save case study as individual images in a folder with metadata JSON.
-
-    Folder structure:
-        case_img{img_idx}_layer{layer_idx}_feat{feature_idx}_{role}/
-            - vanilla_attribution.png
-            - gated_attribution.png  (with patch highlight)
-            - prototype_0.png, prototype_1.png, ...
-            - metadata.json
-    """
-    import json
-
-    img_idx = case['image_idx']
-    feature_idx = case['feature_idx']
-    layer_idx = case['layer_idx']
-    patch_idx = case['patch_idx']
-
-    # Create case study folder
-    folder_name = f"case_img{img_idx}_layer{layer_idx}_feat{feature_idx}_patch{patch_idx}_{case['role'].lower()}"
-    case_dir = output_dir / folder_name
-    case_dir.mkdir(parents=True, exist_ok=True)
-
-    # Get case study image path
-    image_path = get_image_path(img_idx, case_study_image_dir)
-
-    if not image_path or not image_path.exists():
-        print(f"Warning: Image {img_idx} not found")
-        return
-
-    # Load attributions
-    vanilla_attr = load_attribution(img_idx, vanilla_attribution_dir)
-    gated_attr = load_attribution(img_idx, gated_attribution_dir)
-
-    if vanilla_attr is None or gated_attr is None:
-        print(f"Warning: Attributions not found for image {img_idx}")
-        return
-
-    # Load and preprocess main image
-    main_img_array = load_and_preprocess_image(image_path, dataset_config)
-    if main_img_array is None:
-        print(f"Warning: Could not load main image {image_path}")
-        return
-
-    # Detect patch configuration
-    sample_deltas = debug_data[layer_idx]['patch_attribution_deltas'][0]
-    n_patches = len(sample_deltas)
-    patches_per_side = int(np.sqrt(n_patches))
-    patch_size = 224 // patches_per_side
-
-    # Calculate patch coordinates
-    row_idx = patch_idx // patches_per_side
-    col_idx = patch_idx % patches_per_side
-    x, y = col_idx * patch_size, row_idx * patch_size
-
-    # Normalize attributions for visualization
-    vanilla_norm = (vanilla_attr - vanilla_attr.min()) / (vanilla_attr.max() - vanilla_attr.min() + 1e-8)
-    gated_norm = (gated_attr - gated_attr.min()) / (gated_attr.max() - gated_attr.min() + 1e-8)
-
-    # Save vanilla attribution
-    plt.figure(figsize=(6, 6))
-    ax = plt.gca()
-    ax.imshow(main_img_array)
-    ax.imshow(vanilla_norm, cmap='jet', alpha=0.3, interpolation='bilinear')
-    ax.axis('off')
-    plt.tight_layout()
-    plt.savefig(case_dir / "vanilla_attribution.png", dpi=150, bbox_inches='tight')
-    plt.close()
-
-    # Save gated attribution with patch highlight
-    plt.figure(figsize=(6, 6))
-    ax = plt.gca()
-    ax.imshow(main_img_array)
-    ax.imshow(gated_norm, cmap='jet', alpha=0.3, interpolation='bilinear')
-
-    # Highlight the patch
-    color = 'lime' if case['role'] == 'BOOST' else 'red'
-    rect = mpatches.Rectangle((x, y), patch_size, patch_size, linewidth=3, edgecolor=color, facecolor='none')
-    ax.add_patch(rect)
-
-    final_delta = case['final_patch_delta']
-    ax.set_title(f"{case['role']} patch \u0394: {final_delta:.3f}", fontsize=14, fontweight='bold')
-    ax.axis('off')
-    plt.tight_layout()
-    plt.savefig(case_dir / "gated_attribution.png", dpi=150, bbox_inches='tight')
-    plt.close()
-
-    # Get and save prototypes
-    if feature_idx not in feature_index:
-        print(f"Warning: Feature {feature_idx} not in index")
-        top_activations = []
-    else:
-        top_activations = feature_index[feature_idx][:n_prototypes]
-
+    patches_per_side: int,
+    patch_size: int,
+    case_dir: Path,
+) -> List[Dict[str, Any]]:
+    """Save prototype images with patch highlights. Returns prototype metadata list."""
     prototype_metadata = []
     for proto_idx, (proto_debug_idx, proto_patch_idx, proto_activation) in enumerate(top_activations):
-        # Convert debug_idx to actual image_idx for file lookup
         proto_img_idx = debug_to_image_idx.get(proto_debug_idx)
         if proto_img_idx is None:
             continue
 
-        # Load prototype image
+        # Resolve prototype image path
         if prototype_path_mapping is not None:
             proto_img_path = prototype_path_mapping.get(proto_debug_idx)
             if proto_img_path is None:
                 continue
         else:
             proto_img_path = get_image_path(proto_img_idx, prototype_image_dir)
+            if proto_img_path is None:
+                continue
 
         proto_img_array = load_and_preprocess_image(proto_img_path, dataset_config)
         if proto_img_array is None:
             continue
 
-        # Save prototype image with highlighted patch
-        plt.figure(figsize=(6, 6))
-        ax = plt.gca()
-        ax.imshow(proto_img_array)
-
-        # Highlight the activating patch
-        proto_row = proto_patch_idx // patches_per_side
-        proto_col = proto_patch_idx % patches_per_side
-        proto_x = proto_col * patch_size
-        proto_y = proto_row * patch_size
-
-        rect = mpatches.Rectangle((proto_x, proto_y),
-                                  patch_size,
-                                  patch_size,
-                                  linewidth=2,
-                                  edgecolor='yellow',
-                                  facecolor='none')
-        ax.add_patch(rect)
-        ax.set_title(f"Activation={proto_activation:.2f}", fontsize=14, fontweight='bold')
-        ax.axis('off')
-        plt.tight_layout()
-        plt.savefig(case_dir / f"prototype_{proto_idx}.png", dpi=150, bbox_inches='tight')
-        plt.close()
+        px, py = _patch_coords(proto_patch_idx, patches_per_side, patch_size)
+        _save_attribution_overlay(
+            proto_img_array, case_dir / f"prototype_{proto_idx}.png",
+            highlight=(px, py, patch_size, patch_size),
+            highlight_color='yellow', highlight_linewidth=2,
+            title=f"Activation={proto_activation:.2f}",
+        )
 
         prototype_metadata.append({
             'prototype_idx': proto_idx,
@@ -1003,22 +526,25 @@ def save_case_study_individual_images(
             'debug_idx': int(proto_debug_idx),
             'patch_idx': int(proto_patch_idx),
             'activation': float(proto_activation),
-            'image_path': str(proto_img_path)
+            'image_path': str(proto_img_path),
         })
+    return prototype_metadata
 
-    # Save metadata JSON
-    metadata = {
-        'image_idx': int(img_idx),
-        'layer_idx': int(layer_idx),
-        'feature_idx': int(feature_idx),
-        'patch_idx': int(patch_idx),
+
+def _build_case_metadata(
+    case: pd.Series,
+    x: int, y: int,
+    patches_per_side: int, patch_size: int,
+    prototype_metadata: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Build the metadata dict for a case study folder."""
+    return {
+        'image_idx': int(case['image_idx']),
+        'layer_idx': int(case['layer_idx']),
+        'feature_idx': int(case['feature_idx']),
+        'patch_idx': int(case['patch_idx']),
         'role': case['role'],
-        'patch_coordinates': {
-            'x': int(x),
-            'y': int(y),
-            'width': int(patch_size),
-            'height': int(patch_size)
-        },
+        'patch_coordinates': {'x': x, 'y': y, 'width': patch_size, 'height': patch_size},
         'metrics': {
             'composite_improvement': float(case['composite_improvement']),
             'delta_saco': float(case['delta_saco']),
@@ -1026,21 +552,93 @@ def save_case_study_individual_images(
             'delta_pixel_flipping': float(case['delta_pixel']),
             'final_patch_delta': float(case['final_patch_delta']),
             'layer_patch_delta': float(case['layer_patch_delta']),
-            'feature_contribution': float(case['contribution'])
+            'feature_contribution': float(case['contribution']),
         },
         'classification': {
             'predicted_class': str(case['predicted_class']) if pd.notna(case['predicted_class']) else None,
             'true_class': str(case['true_class']) if pd.notna(case['true_class']) else None,
-            'is_correct': bool(case['is_correct'])
+            'is_correct': bool(case['is_correct']),
         },
         'prototypes': prototype_metadata,
         'patch_config': {
-            'patches_per_side': int(patches_per_side),
-            'patch_size': int(patch_size),
-            'total_patches': int(n_patches)
-        }
+            'patches_per_side': patches_per_side,
+            'patch_size': patch_size,
+            'total_patches': patches_per_side * patches_per_side,
+        },
     }
 
+
+def save_case_study_individual_images(
+    case: pd.Series,
+    feature_index: Dict[int, List[Tuple[int, int, float]]],
+    debug_to_image_idx: Dict[int, int],
+    dataset_config,
+    case_study_image_dir: Path,
+    prototype_image_dir: Path,
+    vanilla_attribution_dir: Path,
+    gated_attribution_dir: Path,
+    output_dir: Path,
+    patches_per_side: int,
+    patch_size: int,
+    n_prototypes: int = 10,
+    prototype_path_mapping: Optional[Dict[int, Path]] = None,
+):
+    """Save case study as individual images in a folder with metadata JSON."""
+    img_idx = case['image_idx']
+    feature_idx = case['feature_idx']
+    patch_idx = case['patch_idx']
+
+    folder_name = (
+        f"case_img{img_idx}_layer{case['layer_idx']}_feat{feature_idx}"
+        f"_patch{patch_idx}_{case['role'].lower()}"
+    )
+    case_dir = output_dir / folder_name
+    case_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load image, attributions
+    image_path = get_image_path(img_idx, case_study_image_dir)
+    if not image_path or not image_path.exists():
+        print(f"Warning: Image {img_idx} not found")
+        return
+
+    vanilla_attr = load_attribution(img_idx, vanilla_attribution_dir)
+    gated_attr = load_attribution(img_idx, gated_attribution_dir)
+    if vanilla_attr is None or gated_attr is None:
+        print(f"Warning: Attributions not found for image {img_idx}")
+        return
+
+    main_img = load_and_preprocess_image(image_path, dataset_config)
+    if main_img is None:
+        print(f"Warning: Could not load main image {image_path}")
+        return
+
+    x, y = _patch_coords(patch_idx, patches_per_side, patch_size)
+
+    # Save attribution overlays
+    vanilla_norm = (vanilla_attr - vanilla_attr.min()) / (vanilla_attr.max() - vanilla_attr.min() + 1e-8)
+    gated_norm = (gated_attr - gated_attr.min()) / (gated_attr.max() - gated_attr.min() + 1e-8)
+
+    _save_attribution_overlay(main_img, case_dir / "vanilla_attribution.png", attribution=vanilla_norm)
+    _save_attribution_overlay(
+        main_img, case_dir / "gated_attribution.png",
+        attribution=gated_norm,
+        highlight=(x, y, patch_size, patch_size),
+        highlight_color='lime' if case['role'] == 'BOOST' else 'red',
+        title=f"{case['role']} patch \u0394: {case['final_patch_delta']:.3f}",
+    )
+
+    # Save prototypes
+    top_activations = feature_index.get(feature_idx, [])[:n_prototypes]
+    if not top_activations and feature_idx in feature_index:
+        print(f"Warning: Feature {feature_idx} not in index")
+
+    prototype_metadata = _save_prototype_images(
+        top_activations, debug_to_image_idx, prototype_path_mapping,
+        prototype_image_dir, dataset_config, patches_per_side, patch_size, case_dir,
+    )
+
+    # Write metadata
+    metadata = _build_case_metadata(case, x, y, patches_per_side, patch_size, prototype_metadata)
     with open(case_dir / "metadata.json", 'w') as f:
         json.dump(metadata, f, indent=2)
 
@@ -1059,9 +657,52 @@ def load_attribution(image_idx: int, attribution_dir: Path) -> Optional[np.ndarr
     return np.load(attr_path) if attr_path.exists() else None
 
 
+def _load_validation_prototype_mapping(activations_path: Path) -> Tuple[Dict[int, Path], Dict[int, int]]:
+    """Load image path mapping from validation extraction metadata.
+
+    Returns:
+        (debug_to_path, debug_to_image_idx) mappings for the validation set.
+    """
+    metadata_file = activations_path / "extraction_metadata.json"
+    if not metadata_file.exists():
+        raise FileNotFoundError(
+            f"Metadata file not found: {metadata_file}\n"
+            f"Please re-run extract_sae_activations.py to generate the metadata with image path mapping."
+        )
+
+    with open(metadata_file, 'r') as f:
+        metadata = json.load(f)
+
+    if 'image_paths' not in metadata:
+        raise ValueError(
+            f"Metadata file is missing 'image_paths' field.\n"
+            f"Please re-run extract_sae_activations.py to generate the correct metadata."
+        )
+
+    debug_to_path = {int(k): Path(v) for k, v in metadata['image_paths'].items()}
+    debug_to_image_idx = {idx: idx for idx in debug_to_path.keys()}
+    print(f"  Loaded mapping for {len(debug_to_path)} validation images from metadata")
+    return debug_to_path, debug_to_image_idx
+
+
+def _print_layer_summary(layer_idx: int, case_studies: pd.DataFrame):
+    """Print summary statistics for a single layer's case studies."""
+    print(f"\nLayer {layer_idx} Summary:")
+    print(f"  Total case studies: {len(case_studies)}")
+    print(f"  Unique features: {case_studies['feature_idx'].nunique()}")
+    print(f"  Role distribution: {case_studies['role'].value_counts().to_dict()}")
+
+    top_features = case_studies['feature_idx'].value_counts().head(10)
+    print(f"\n  Most common features:")
+    for feat_idx, count in top_features.items():
+        avg_contrib = case_studies[case_studies['feature_idx'] == feat_idx]['contribution'].mean()
+        print(f"    Feature {feat_idx}: appears {count}x, avg contribution {avg_contrib:.4f}")
+
+
 def run_case_study_analysis(
     experiment_path: Path,
     experiment_config: str,
+    dataset: str,
     layers: List[int],
     n_top_images: int = 20,
     n_patches_per_image: int = 5,
@@ -1072,11 +713,12 @@ def run_case_study_analysis(
     max_prototype_images: Optional[int] = None
 ):
     """
-    Main entry point for case study analysis (ImageNet only).
+    Main entry point for case study analysis.
 
     Args:
         experiment_path: Path to experiment directory
         experiment_config: Name of the experiment configuration
+        dataset: Dataset name (e.g. 'imagenet', 'covidquex')
         layers: List of layer indices to analyze
         n_top_images: Number of top improved/degraded images to analyze
         n_patches_per_image: Number of patches per image to extract features from
@@ -1088,7 +730,6 @@ def run_case_study_analysis(
         max_prototype_images: Optional limit on validation images to load for prototypes (saves RAM).
         mode: Either 'improved' (default) or 'degraded' - selects top improved or degraded images
     """
-    dataset = 'imagenet'
     print(f"\n{'='*80}")
     print(f"CASE STUDY ANALYSIS: {dataset} / {experiment_config} ({mode})")
     print(f"{'='*80}\n")
@@ -1111,37 +752,17 @@ def run_case_study_analysis(
     dataset_config = get_dataset_config(dataset)
 
     # Determine image directories
-    test_image_dir = Path("./data/imagenet_unified/test")
-    val_image_dir = Path("./data/imagenet_unified/val")
+    test_image_dir = Path(f"./data/{dataset}_unified/test")
+    val_image_dir = Path(f"./data/{dataset}_unified/val")
 
     # Create mapping from debug_idx to image_idx for test set
     # The debug data is in processing order, same as faithfulness CSV rows
     test_debug_to_image_idx = dict(enumerate(gated_faithfulness['image_idx'].tolist()))
 
-    # Create mapping for validation set if using validation prototypes
+    # Load validation prototype mapping if using validation prototypes
     if use_validation_prototypes:
-        # Load the image path mapping from extraction metadata
-        # This ensures we use the EXACT same order as when activations were extracted
-        import json
-        metadata_file = validation_activations_path / "extraction_metadata.json"
-        if not metadata_file.exists():
-            raise FileNotFoundError(
-                f"Metadata file not found: {metadata_file}\n"
-                f"Please re-run extract_sae_activations.py to generate the metadata with image path mapping."
-            )
-
-        with open(metadata_file, 'r') as f:
-            metadata = json.load(f)
-
-        if 'image_paths' not in metadata:
-            raise ValueError(
-                f"Metadata file is missing 'image_paths' field.\n"
-                f"Please re-run extract_sae_activations.py to generate the correct metadata."
-            )
-
-        val_debug_to_path = {int(k): Path(v) for k, v in metadata['image_paths'].items()}
-        val_debug_to_image_idx = {idx: idx for idx in val_debug_to_path.keys()}  # Simple mapping
-        print(f"  Loaded mapping for {len(val_debug_to_path)} validation images from metadata")
+        assert validation_activations_path is not None
+        val_debug_to_path, val_debug_to_image_idx = _load_validation_prototype_mapping(validation_activations_path)
     else:
         val_debug_to_image_idx = None
         val_debug_to_path = None
@@ -1158,38 +779,36 @@ def run_case_study_analysis(
         print(f"Loading debug data for layer {layer_idx}...")
         debug_data = load_debug_data(gated_path, layers=[layer_idx])
 
+        # Precompute patch grid from debug data
+        sample_deltas = debug_data[layer_idx]['patch_attribution_deltas'][0]
+        patches_per_side, patch_size = _patch_grid(len(sample_deltas))
+
         if use_validation_prototypes:
             print(f"Loading validation activations for layer {layer_idx}...")
             validation_data = load_activation_data(validation_activations_path, layers=[layer_idx], max_images=max_prototype_images)
         else:
             validation_data = None
 
-        # Build feature activation index
-        # Use validation data for prototypes if available, otherwise use test data
+        # Build feature activation index from validation or test data
         if use_validation_prototypes:
+            assert validation_data is not None
+            assert val_debug_to_image_idx is not None
             feature_index = build_feature_activation_index(validation_data, layer_idx, source_name="validation")
             prototype_debug_to_image_idx = val_debug_to_image_idx
             prototype_image_dir = val_image_dir
-            prototype_paths = val_debug_to_path  # Use path mapping for validation
+            prototype_paths = val_debug_to_path
         else:
             feature_index = build_feature_activation_index(debug_data, layer_idx, source_name="test")
             prototype_debug_to_image_idx = test_debug_to_image_idx
             prototype_image_dir = test_image_dir
-            prototype_paths = None  # Test set uses simple path construction
+            prototype_paths = None
 
         # Extract case studies (always from test set)
         case_studies = extract_case_studies(
-            vanilla_faithfulness,
-            gated_faithfulness,
-            debug_data,
-            layer_idx,
-            vanilla_path / "attributions",
-            gated_path / "attributions",
-            n_top_images=n_top_images,
-            n_patches_per_image=n_patches_per_image,
-            mode=mode
+            vanilla_faithfulness, gated_faithfulness, debug_data, layer_idx,
+            vanilla_path / "attributions", gated_path / "attributions",
+            n_top_images=n_top_images, n_patches_per_image=n_patches_per_image, mode=mode,
         )
-
         all_case_studies.append(case_studies)
 
         # Save case studies table
@@ -1199,34 +818,16 @@ def run_case_study_analysis(
 
         # Visualize top cases
         print(f"\nGenerating visualizations (saving individual images)...")
-        for case_idx, (_, case) in enumerate(case_studies.head(n_case_visualizations).iterrows()):
+        for _, case in case_studies.head(n_case_visualizations).iterrows():
             save_case_study_individual_images(
-                case,
-                feature_index,
-                prototype_debug_to_image_idx,
-                debug_data,
-                dataset_config,
-                test_image_dir,  # Case study images always from test
-                prototype_image_dir,  # Prototypes from validation or test
-                vanilla_path / "attributions",
-                gated_path / "attributions",
-                layer_output_dir,
-                n_prototypes=n_prototypes,
-                prototype_path_mapping=prototype_paths
+                case, feature_index, prototype_debug_to_image_idx, dataset_config,
+                test_image_dir, prototype_image_dir,
+                vanilla_path / "attributions", gated_path / "attributions",
+                layer_output_dir, patches_per_side, patch_size,
+                n_prototypes=n_prototypes, prototype_path_mapping=prototype_paths,
             )
 
-        # Summary statistics
-        print(f"\nLayer {layer_idx} Summary:")
-        print(f"  Total case studies: {len(case_studies)}")
-        print(f"  Unique features: {case_studies['feature_idx'].nunique()}")
-        print(f"  Role distribution: {case_studies['role'].value_counts().to_dict()}")
-
-        # Top features by frequency
-        top_features = case_studies['feature_idx'].value_counts().head(10)
-        print(f"\n  Most common features:")
-        for feat_idx, count in top_features.items():
-            avg_contrib = case_studies[case_studies['feature_idx'] == feat_idx]['contribution'].mean()
-            print(f"    Feature {feat_idx}: appears {count}x, avg contribution {avg_contrib:.4f}")
+        _print_layer_summary(layer_idx, case_studies)
 
         # Free memory for this layer before processing next
         del debug_data, feature_index
@@ -1249,17 +850,18 @@ def run_case_study_analysis(
 
 if __name__ == "__main__":
     # Configuration
-    experiment_path = Path("./experiments/feature_gradient_sweep_20260128_220546/") #TODO: Fill out the experiment folder
-    experiment_config = "layers_2_3_4_kappa_None_combined_clamp_None"
-    layers = [2,3,4]
+    dataset = 'imagenet'
+    experiment_path = Path("experiments/feature_gradient_sweep_20260209_225220/")  # TODO: Fill out the experiment folder
+    experiment_config = "layers_6_7_8_kappa_0.5_combined_clamp_10.0"
+    layers = [6,7,8]
 
     # Extract validation set activations for prototypes if not already done
     # This will skip extraction if files already exist
     validation_activations_path = extract_sae_activations_if_needed(
-        dataset_name='covidquex',
+        dataset_name=dataset,
         layers=layers,
         split='val',
-        output_dir=Path("./sae_activations/covidquex_val"),
+        output_dir=Path(f"./data/sae_activations/{dataset}_val"),
         subset_size=None,  # Process all validation images
         use_clip=True
     )
@@ -1268,6 +870,7 @@ if __name__ == "__main__":
     case_studies_improved = run_case_study_analysis(
         experiment_path=experiment_path,
         experiment_config=experiment_config,
+        dataset=dataset,
         layers=layers,
         n_top_images=500,
         n_patches_per_image=10,
@@ -1282,6 +885,7 @@ if __name__ == "__main__":
     case_studies_degraded = run_case_study_analysis(
         experiment_path=experiment_path,
         experiment_config=experiment_config,
+        dataset=dataset,
         layers=layers,
         n_top_images=100,
         n_patches_per_image=5,

@@ -46,7 +46,7 @@ class SweepConfig:
     """
     datasets: List[Tuple[str, Path]]
     layer_combinations: List[List[int]]
-    kappa_values: List[float]
+    kappa_values: List[float] = field(default_factory=lambda: [0.5])
     gate_constructions: List[str] = field(default_factory=lambda: ["combined"])
     shuffle_decoder_options: List[bool] = field(default_factory=lambda: [False])
     clamp_max_values: List[float] = field(default_factory=lambda: [10.0])
@@ -335,7 +335,7 @@ def run_single_experiment(
         json.dump(config_dict, f, indent=2)
 
     try:
-        results, saco_results = run_unified_pipeline(
+        results, unified_metrics = run_unified_pipeline(
             config=pipeline_config,
             dataset_name=dataset_name,
             source_data_path=source_path,
@@ -350,7 +350,7 @@ def run_single_experiment(
 
         config_dict['status'] = 'success'
         config_dict['n_images'] = len(results)
-        config_dict['saco_results'] = saco_results
+        config_dict['metrics'] = unified_metrics
 
     except Exception as e:
         print(f"Error in experiment: {e}")
@@ -485,11 +485,11 @@ def main():
             ("imagenet", Path("./data/imagenet/raw")),
             # ("covidquex", Path("./data/covidquex/data/lung/")),
         ],
-        layer_combinations=[[3]],
-        kappa_values=[0.5],
-        clamp_max_values=[10.0],
-        subset_size=500,
+        current_mode="test",
+        layer_combinations=[[6,7,8]],
+        subset_size=100,
         random_seed=123,
+        debug_mode=True,
     )
 
     results = run_parameter_sweep(**asdict(cfg))
