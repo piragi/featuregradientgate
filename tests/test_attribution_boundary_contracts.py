@@ -2,8 +2,6 @@
 
 import inspect
 
-import pytest
-
 
 def test_compute_attribution_exists():
     """compute_attribution is importable from the canonical package path."""

@@ -116,7 +116,7 @@ def create_attribution_bins(raw_attributions, n_bins=20):
 def _load_tensor_and_attributions(result):
     """Load cached tensor and attribution from a ClassificationResult.
 
-    Returns (image_tensor, raw_attributions, confidence, class_idx).
+    Returns (image_tensor, raw_attributions, confidence).
     image_tensor is numpy (C, H, W).
     """
     if result._cached_tensor is not None:
@@ -137,7 +137,7 @@ def _load_tensor_and_attributions(result):
         raw_attr = np.load(attr_path)
 
     pred = result.prediction
-    return tensor, raw_attr, pred.confidence, pred.predicted_class_idx
+    return tensor, raw_attr, pred.confidence
 
 
 def _perturb_bins(bins, image_tensor, patch_size):
@@ -167,7 +167,7 @@ def _classify_batch(model, batch_tensor, device):
     return idxs.cpu().numpy(), confs.cpu().numpy()
 
 
-def _measure_bin_drops(bins, perturbed_tensors, original_confidence, model, device):
+def _measure_bin_drops(perturbed_tensors, original_confidence, model, device):
     """Measure confidence drop when each bin is perturbed. Returns numpy array."""
     if not perturbed_tensors:
         return np.array([])
@@ -176,16 +176,16 @@ def _measure_bin_drops(bins, perturbed_tensors, original_confidence, model, devi
     return original_confidence - confidences
 
 
-def _saco_for_image(result, model, config, device, n_bins=20):
+def _saco_for_image(result, model, device, n_bins=20):
     """Compute SaCo score for a single image. Returns (saco_score, bin_records)."""
-    tensor, raw_attr, confidence, class_idx = _load_tensor_and_attributions(result)
+    tensor, raw_attr, confidence = _load_tensor_and_attributions(result)
 
     patch_size = getattr(getattr(model, 'cfg', None), 'patch_size', 16)
     bins = create_attribution_bins(raw_attr, n_bins)
     perturbed = _perturb_bins(bins, tensor, patch_size)
 
     model.eval()
-    drops = _measure_bin_drops(bins, perturbed, confidence, model, device)
+    drops = _measure_bin_drops(perturbed, confidence, model, device)
 
     # Sort descending by attribution so that upper-triangle attr_diffs are
     # positive for high-attr bins — gives positive SaCo for concordant data.
@@ -211,13 +211,13 @@ def _saco_for_image(result, model, config, device, n_bins=20):
 # Dataset-level analysis (entry point)
 # ---------------------------------------------------------------------------
 
-def _get_or_compute_binned_results(config, original_results, model, device, n_bins):
+def _get_or_compute_binned_results(original_results, model, device, n_bins):
     """Compute binned SaCo results for all images."""
     print(f"Computing binned SaCo results for {len(original_results)} images...")
     all_records = []
     for result in tqdm(original_results, desc=f"Processing with {n_bins} bins"):
         try:
-            saco_score, bin_records = _saco_for_image(result, model, config, device, n_bins)
+            saco_score, bin_records = _saco_for_image(result, model, device, n_bins)
             for r in bin_records:
                 r["image_name"] = str(result.image_path)
                 r["saco_score"] = saco_score
@@ -248,7 +248,7 @@ def run_binned_attribution_analysis(config, vit_model, original_results, device,
 
     print(f"=== BINNED SACO ANALYSIS (n_bins={n_bins}) ===")
 
-    bin_results_df = _get_or_compute_binned_results(config, original_results, vit_model, device, n_bins)
+    bin_results_df = _get_or_compute_binned_results(original_results, vit_model, device, n_bins)
     if bin_results_df.empty:
         print("No results were generated or loaded. Aborting analysis.")
         return {}

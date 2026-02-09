@@ -1,6 +1,4 @@
 import inspect
-
-import pytest
 import torch
 
 

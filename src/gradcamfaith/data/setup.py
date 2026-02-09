@@ -78,7 +78,7 @@ def main():
     try:
         download_hyperkvasir(data_dir, models_dir)
         download_covidquex(data_dir, models_dir)
-        download_imagenet(data_dir, models_dir)
+        download_imagenet(data_dir)
 
         from gradcamfaith.data.dataset_config import refresh_imagenet_config
         refresh_imagenet_config()

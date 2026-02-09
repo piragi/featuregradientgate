@@ -67,7 +67,7 @@ def test_download_hyperkvasir_skips_dataset_redownload_when_extracted(monkeypatc
         called["extract"] = True
         raise AssertionError("extract_zip should not be called when extracted dataset exists")
 
-    def _fake_model_download(_file_id: str, output_path: Path, _description: str):
+    def _fake_model_download(_file_id: str, output_path: Path):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"model-bytes")
 

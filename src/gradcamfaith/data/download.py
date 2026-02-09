@@ -36,7 +36,7 @@ def download_with_progress(url: str, filename: Path) -> None:
         raise
 
 
-def download_from_gdrive(file_id: str, output_path: Path, description: str) -> None:
+def download_from_gdrive(file_id: str, output_path: Path) -> None:
     """Download file from Google Drive using gdown."""
     if output_path.exists():
         return
@@ -113,10 +113,10 @@ def download_hyperkvasir(data_dir: Path, models_dir: Path) -> None:
     }
 
     output_path = hk_models_dir / model_info["name"]
-    download_from_gdrive(model_info["id"], output_path, model_info["description"])
+    download_from_gdrive(model_info["id"], output_path)
 
 
-def download_imagenet(data_dir: Path, models_dir: Path) -> None:
+def download_imagenet(data_dir: Path) -> None:
     """
     Download ImageNet-1k validation and test splits from Hugging Face parquet files.
     Avoids training shards entirely by targeting parquet files directly.
@@ -230,7 +230,7 @@ def download_covidquex(data_dir: Path, models_dir: Path) -> None:
     }
 
     dataset_path = cq_data_dir / dataset_info["name"]
-    download_from_gdrive(dataset_info["id"], dataset_path, dataset_info["description"])
+    download_from_gdrive(dataset_info["id"], dataset_path)
 
     # Extract dataset if it's a tar.gz file
     if dataset_path.suffix == '.gz' and dataset_path.exists():
@@ -246,7 +246,7 @@ def download_covidquex(data_dir: Path, models_dir: Path) -> None:
     }
 
     output_path = cq_models_dir / model_info["name"]
-    download_from_gdrive(model_info["id"], output_path, model_info["description"])
+    download_from_gdrive(model_info["id"], output_path)
 
     # Check if the downloaded model is a tar.gz archive and extract if needed
     if output_path.exists():
@@ -319,7 +319,6 @@ def download_thesis_saes(data_dir: Path) -> None:
         download_from_gdrive(
             file_id=file_id,
             output_path=zip_path,
-            description=f"{folder_name} zip"
         )
 
         # 3. Extract and cleanup

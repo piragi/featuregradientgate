@@ -169,8 +169,8 @@ This tracker is a required, evolving log for project state and near-term executi
 
 - Program branch: `feature/team-research-restructure-plan`
 - Branching mode: `slice branches + immediate integration + accepted checkpoint tags`
-- Last successful commit reflected here: `WP-19 integrated, accepted/wp-19 tagged`
-- Last accepted integration checkpoint: `accepted/wp-19`
+- Last successful commit reflected here: `WP-20 integrated, accepted/wp-20 tagged`
+- Last accepted integration checkpoint: `accepted/wp-20`
 - WP-06B status: `done and accepted`
 - WP-06C status: `done and accepted`
 - WP-06D status: `done and accepted`
@@ -187,11 +187,12 @@ This tracker is a required, evolving log for project state and near-term executi
 - WP-17 status: `done and accepted`
 - WP-18 status: `done and accepted`
 - WP-19 status: `done and accepted — path normalization + cleanup complete: prepared dataset paths moved to data/prepared, run outputs moved to data/runs, model checkpoints moved to data/models, examples removed.`
-- What happened most recently: `WP-19 completed path migration in code/docs/tests, added opt-in raw source cleanup after prepare, migrated existing local run/model/prepared directories, and validated with uv run pytest (13 passed, 3 skipped).`
+- WP-20 status: `done — dead-surface cleanup completed (unused imports/locals/args).`
+- What happened most recently: `WP-20 removed dead imports/locals and removed unused internal args where callsites could be safely updated in lockstep. Validation: uvx ruff check src tests --select F401,F841,ARG001,ARG002 is clean; uv run pytest passed (13 passed, 3 skipped).`
 - Reviewer decision: `accepted`
-- What should happen next: `decide archive strategy for docs/scripts/tests/AGENTS history, then continue deferred refactors (sweep resource lifecycle extraction and analysis compression).`
-- Immediate next task (concrete): `define archive scope and retention policy without deleting useful reproducibility artifacts.`
-- Immediate validation for that task: `no code changes required; document decisions in AGENTS.md and plan next slice.`
+- What should happen next: `final outsider-usability pass: rewrite README as setup → sweep → comparison → case_studies runbook and harden analysis entrypoints.`
+- Immediate next task (concrete): `implement README workflow rewrite and robust comparison/case_studies runner ergonomics.`
+- Immediate validation for that task: `run documented commands end-to-end on existing run folder and verify expected artifact paths/output messages.`
 - Known blockers/risks now: `older experiment artifacts still use pre-WP18 schema and old root output paths; comparison.py no longer supports old results.json format without rerun.`
 - Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ in a future WP.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
@@ -1525,6 +1526,42 @@ No backward compatibility with old `saco_results` format — old experiment data
 
 ---
 
+### WP-20 Concrete Plan (Dead-Surface Hygiene: Unused Imports/Variables/Args)
+
+Goal: eliminate low-signal dead surface (unused imports, locals, and parameters) before final outsider-usability polish. This is a readability/maintenance slice only.
+
+Current lint baseline (`uvx ruff check src tests --select F401,F841,ARG001,ARG002`):
+- `src/gradcamfaith/data/dataloader.py`: unused arg `use_clip`
+- `src/gradcamfaith/data/download.py`: unused arg `description`
+- `src/gradcamfaith/data/download.py`: unused arg `models_dir` (ImageNet path)
+- `src/gradcamfaith/experiments/comparison.py`: unused local `best_performer`
+- `src/gradcamfaith/experiments/saco.py`: unused arg `bins`
+- `src/gradcamfaith/experiments/saco.py`: unused arg `config`
+- `tests/test_attribution_boundary_contracts.py`: unused import `pytest`
+- `tests/test_smoke_contracts.py`: unused import `pytest`
+
+Planned changes:
+1. Remove straightforward dead imports/locals.
+2. For public function args retained for compatibility, mark as intentionally unused via `_arg` naming and/or explicit inline comment.
+3. For internal-only function args, remove them from signatures and update callsites in the same slice.
+4. Keep behavior and outputs unchanged (no algorithm/metric/path changes in this WP).
+
+Hard constraints:
+- No behavior changes.
+- No output schema/path changes.
+- No API breakage for documented public entrypoints unless explicitly approved.
+- Keep edits minimal and local to dead-surface cleanup.
+
+Validation:
+- `uvx ruff check src tests --select F401,F841,ARG001,ARG002` (must be clean).
+- `uv run pytest` (all passing/skipped as expected).
+
+Expected outcome:
+- Dead-surface lint baseline for unused imports/locals/args is cleared.
+- Reduced cognitive noise before final README/usability pass.
+
+---
+
 ### Decision Log
 - **WP-01**: Added `[build-system]` (hatchling) and `[tool.hatch.build.targets.wheel]` to pyproject.toml to make `src/gradcamfaith` an installable package. This is required for absolute imports (`from gradcamfaith.core.config import ...`) to work. `uv sync` installs the package in dev mode automatically.
 - **WP-01**: Internal imports within the package use absolute paths (`from gradcamfaith.core.config import ...`), not relative imports, for clarity.
@@ -1579,6 +1616,8 @@ No backward compatibility with old `saco_results` format — old experiment data
 - **Post-WP18 path normalization decision**: canonical runtime paths are now `data/prepared/<dataset>/`, `data/runs/<run_name>/`, and `data/models/<dataset>/`. No symlink transition period is permitted.
 - **Examples policy update**: `src/gradcamfaith/examples/` is removed for now; no example maintenance surface during current cleanup phase.
 - **WP-19 (path normalization + cleanup)**: Implemented path migration in code/docs/tests (`*_unified` → `data/prepared/<dataset>`, run outputs to `data/runs`, checkpoints to `data/models`), removed example module and its smoke-contract test, and added opt-in raw source cleanup (`cleanup_source=True`) in `prepare_dataset_if_needed`. Local workspace directories were migrated to the new layout. Validation: `uv run pytest` passed (`13 passed, 3 skipped`).
+- **WP-20 planning decision**: Introduced dedicated dead-surface hygiene workpackage (unused imports/locals/args) with explicit `ruff` gate (`F401,F841,ARG001,ARG002`) before final outsider-usability/documentation pass.
+- **WP-20 (dead-surface hygiene)**: Cleared all current `ruff` unused findings in `src/` and `tests/` for `F401,F841,ARG001,ARG002`: removed dead imports/locals and removed unused internal parameters where callsites were updated in lockstep. Validation: `uvx ruff check src tests --select F401,F841,ARG001,ARG002` clean; `uv run pytest` passed (`13 passed, 3 skipped`).
 
 ## Tooling and Commands
 Preferred command style:
@@ -1892,18 +1931,17 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Validate path normalization end-to-end:
-   - prepared data under `data/prepared/<dataset>/`
-   - model checkpoints under `data/models/<dataset>/`
-   - runs under `data/runs/<run_name>/`
-2. Define and implement explicit raw-data cleanup policy after preparation (opt-in and reproducible).
+1. Final outsider-usability pass:
+   - rewrite `README.md` as setup → sweep → comparison → case_studies runbook
+   - harden `comparison.py` and `case_studies.py` entry flows for non-expert usage
+2. Define and document raw-data cleanup policy after preparation (opt-in and reproducible).
 3. Keep archiving decisions deferred for now (`docs/`, `scripts/`, `tests/`, and AGENTS history).
-4. Continue pending refactors:
+4. Continue deferred refactors:
    - Sweep compression (resource lifecycle extraction to `models/`, deferred from WP-06D).
    - `case_studies.py` and `comparison.py` compression.
    - Debug accumulation cleanup in `experiments/pipeline.py` (~90 lines).
    - Paper preparation infrastructure (frozen configs, reproduction entrypoints).
-   - WP-06E (unused-argument + dead-surface cleanup).
+   - Legacy WP-06E follow-ups not covered by WP-20.
 
 ## Done Criteria for This Rework
 - Core method code is isolated from experiment orchestration.

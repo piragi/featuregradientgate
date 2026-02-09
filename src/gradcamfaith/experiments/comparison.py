@@ -135,14 +135,6 @@ def calculate_statistical_comparison(sweep_df: pd.DataFrame, vanilla_df: pd.Data
             print(f"Warning: No treatment experiments found for {dataset}")
             continue
 
-        # Find best performers for each metric
-        for metric in metrics:
-            # For pixelflipping, lower is better; for others, higher is better
-            if metric == 'pixelflipping':
-                best_performer = treatment_subset.loc[treatment_subset[f'{metric}_mean'].idxmin()]
-            else:
-                best_performer = treatment_subset.loc[treatment_subset[f'{metric}_mean'].idxmax()]
-
         # Compare all experiments against vanilla
         for _, treatment_row in treatment_subset.iterrows():
             comparison = {

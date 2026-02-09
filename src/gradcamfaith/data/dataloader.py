@@ -182,7 +182,6 @@ def create_dataloader(
 def get_single_image_loader(
     image_path: Path,
     dataset_config: DatasetConfig,
-    use_clip: bool = False
 ) -> torch.Tensor:
     """
     Load and preprocess a single image for inference.
@@ -190,7 +189,6 @@ def get_single_image_loader(
     Args:
         image_path: Path to the image
         dataset_config: Configuration for preprocessing
-        use_clip: If True, use CLIP-specific preprocessing
         
     Returns:
         Preprocessed image tensor ready for model input

@@ -69,9 +69,7 @@ def classify_explain_single_image(
             return loaded_result, {}  # No debug info from cache
 
     # Load and preprocess image
-    # Check if we're using CLIP (config might be None in some cases)
-    use_clip = config and config.classify.use_clip
-    input_tensor = get_single_image_loader(image_path, dataset_config, use_clip=use_clip)
+    input_tensor = get_single_image_loader(image_path, dataset_config)
     input_tensor = input_tensor.to(device)
 
     raw_attribution_result_dict = compute_attribution(

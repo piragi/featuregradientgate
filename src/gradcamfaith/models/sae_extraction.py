@@ -124,7 +124,7 @@ def _extract_sae_activations(
     # Process images
     for img_idx, (image_path, _label) in enumerate(tqdm(image_data, desc="Processing images")):
         try:
-            input_tensor = get_single_image_loader(image_path, dataset_config, use_clip=use_clip)
+            input_tensor = get_single_image_loader(image_path, dataset_config)
             input_tensor = input_tensor.to(device)
 
             # Setup hooks to capture residuals
