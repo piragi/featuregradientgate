@@ -185,11 +185,12 @@ This tracker is a required, evolving log for project state and near-term executi
 - WP-14 status: `done and accepted`
 - WP-15 status: `done and accepted`
 - WP-16 status: `done and accepted`
-- What happened most recently: `WP-16 implemented and accepted. Removed all waterbirds dataset support — config, transform, prepare function, registry entry, hardcoded CLIP check. Renamed create_clip_classifier_for_waterbirds → create_clip_classifier (generic, required class_names).`
+- WP-17 status: `planned`
+- What happened most recently: `WP-17 plan written — analysis cleanup for comparison.py + case_studies.py. Found latent WP-16 bug (clip_text_prompts not set in SAE extraction).`
 - Reviewer decision: `WP-16 accepted.`
-- What should happen next: `define next workpackage(s) — remaining candidates: case_studies.py decomposition, comparison.py cleanup, sweep.py resource helpers extraction.`
-- Immediate next task (concrete): `discuss scope for next WP with maintainer.`
-- Immediate validation for that task: `n/a`
+- What should happen next: `implement WP-17 after plan approval.`
+- Immediate next task (concrete): `implement WP-17 on wp/WP-17-analysis-cleanup branch.`
+- Immediate validation for that task: `uv run pytest — 14 pass, 3 skip.`
 - Known blockers/risks now: `none`
 - Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ in a future WP.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
@@ -991,6 +992,164 @@ Goal: Remove all waterbirds-specific code paths, configs, and hardcoded dataset 
 - CLIP classifier factory is generic (no dataset-specific name or defaults).
 - CLIP usage is purely config-driven (no hardcoded dataset name checks).
 - ~100 lines of dead code removed.
+
+---
+
+### WP-17 Concrete Plan (Analysis Cleanup: comparison.py + case_studies.py)
+
+Goal: Remove dead code, fix a latent WP-16 bug, separate SAE extraction from analysis, rename conflated functions, compress repetitive formatting, and rewrite case_studies.py internals for clarity. No behavior changes to analysis outputs.
+
+Current state: `comparison.py` (583 lines, 14 functions), `case_studies.py` (1294 lines, 15 functions). Total: 1877 lines.
+
+#### Audit findings
+
+**comparison.py**:
+- `cohens_d()` (line 21) is **dead** — never called. The effect size is computed inline in `calculate_statistical_comparison` from summary stats.
+- `print_detailed_results`, `identify_best_performers`, `identify_best_overall_performers` share ~80% of their metric-formatting logic (~170 lines of near-duplicate print code).
+- `save_results` hardcodes output filenames to CWD.
+- Otherwise clean: stats engine is correct, `main()` is a clean orchestrator.
+
+**case_studies.py**:
+- **Two unrelated responsibilities**: SAE activation extraction (lines 23-244, GPU inference) + case study analysis (lines 247-1294, post-hoc analysis & visualization).
+- **Latent WP-16 bug**: `_extract_sae_activations` line 88-90 sets `use_clip=True` but never sets `clip_text_prompts`. After WP-16, `create_clip_classifier` requires `class_names: List[str]` — this will crash at runtime when `None` is passed. Additionally, the CLIP classifier is created but never used — only the vision model is needed for hook-based residual capture.
+- **Dead function**: `visualize_case_study()` (lines 661-847, 135 lines) creates a single multi-panel figure but is never called by `run_case_study_analysis`. Replaced by `save_case_study_individual_images`.
+- **Hardcoded dataset**: `run_case_study_analysis` hardcodes `dataset = 'imagenet'` (line 1091) instead of accepting it as parameter. The `__main__` block extracts activations for `covidquex` but the analysis forces `imagenet` — a mismatch.
+- **Name collision**: `compute_composite_improvement` (z-score normalization, per-image) vs comparison.py's `calculate_composite_improvement` (simple average of percent improvements, from summary stats). Same concept, different semantics, confusing names.
+
+#### Part 1: Delete dead code
+
+- Delete `cohens_d()` from comparison.py (never called).
+- Delete `visualize_case_study()` from case_studies.py (replaced by `save_case_study_individual_images`, not called by orchestrator). ~135 lines removed.
+
+#### Part 2: Fix latent WP-16 bug in SAE extraction
+
+`_extract_sae_activations` creates a CLIP config without setting `clip_text_prompts`:
+```python
+temp_config.classify.use_clip = True
+temp_config.classify.clip_model_name = "open-clip:..."
+# clip_text_prompts left as None → crash in create_clip_classifier
+```
+
+Fix: set `clip_text_prompts` from dataset config class names (matching sweep.py pattern):
+```python
+if use_clip:
+    temp_config.classify.use_clip = True
+    temp_config.classify.clip_model_name = "open-clip:laion/CLIP-ViT-B-32-DataComp.XL-s13B-b90K"
+    dataset_cfg = get_dataset_config(dataset_name)
+    temp_config.classify.clip_text_prompts = [f"a photo of a {cls}" for cls in dataset_cfg.class_names]
+```
+
+Note: the extraction only needs the vision model (for hook-based residual capture). The CLIP classifier (text encoder + text embeddings) is created but never used. This is wasteful but not broken. A future optimization could add a model-only loading path, but that's out of scope for this WP.
+
+#### Part 3: Move SAE extraction to models/
+
+Move `extract_sae_activations_if_needed` + `_extract_sae_activations` → new `models/sae_extraction.py`.
+
+Rationale:
+- This is GPU inference code: loads models via `load_model_for_dataset`, loads SAEs via `load_steering_resources`, runs forward passes with hooks, handles checkpointing.
+- It belongs in the models layer, not in an analysis file.
+- case_studies.py will import from `gradcamfaith.models.sae_extraction`.
+- ~220 lines moved out of case_studies.py.
+
+#### Part 4: Rename conflated functions
+
+- comparison.py `calculate_composite_improvement(row, metrics)` → `_average_percent_improvement(row, metrics)` — make private (only used by `identify_best_overall_performers`), name reflects what it does (averages percent improvements from summary stats).
+- case_studies.py `compute_composite_improvement(vanilla_df, gated_df)` → `compute_per_image_improvement(vanilla_df, gated_df)` — name reflects that it works per-image with z-score normalization, distinct from the summary-stat version.
+
+#### Part 5: Parameterize hardcoded values
+
+- `run_case_study_analysis`: add `dataset: str` parameter instead of hardcoding `dataset = 'imagenet'` (line 1091). Propagate to path construction.
+- comparison.py `save_results`: accept `output_dir: Path` parameter instead of hardcoding CWD filenames.
+
+#### Part 6: Compress comparison.py print formatting
+
+Extract shared `_format_metric_comparison(row, metric)` helper returning a formatted string block. Deduplicate the metric-formatting loops in `print_detailed_results`, `identify_best_performers`, `identify_best_overall_performers`.
+
+Lower priority — these are research output functions that may need per-use tweaking. Only deduplicate the clearly shared core (metric name, treatment/vanilla values, percent improvement, significance stars).
+
+#### Part 7: Rewrite case_studies.py internals for clarity
+
+After Parts 1-5, case_studies.py still has ~950 lines of tangled analysis+visualization code. Rewrite the internal structure:
+
+**7a. Extract `_patch_grid(n_patches)` helper**
+
+Patch grid geometry (`n_patches`, `patches_per_side`, `patch_size`) is recomputed from debug data in 4 separate places: `find_dominant_features_in_image`, (deleted) `visualize_case_study`, `save_case_study_individual_images`, and inline in various loops. Extract once:
+
+```python
+def _patch_grid(n_patches: int) -> Tuple[int, int]:
+    """Derive patch grid geometry. Returns (patches_per_side, patch_size)."""
+    side = int(np.sqrt(n_patches))
+    return side, 224 // side
+```
+
+**7b. Extract `_save_attribution_overlay(img, attr, path, patch_highlight=None, title=None)`**
+
+The pattern "normalize attribution → imshow image → imshow heatmap overlay → optional rectangle → save" appears 3 times in `save_case_study_individual_images` (vanilla, gated, each prototype). Extract to a single helper. This replaces ~50 lines of repeated plt code with 3 one-liner calls.
+
+**7c. Unify boost/suppress logic in `find_dominant_features_in_image`**
+
+Currently duplicated with inverted sign (lines 541-556):
+```python
+if final_delta > 0:
+    pos_contribs = [(i, c) for i, c in enumerate(patch_contributions) if c > 0]
+    ...
+    best_idx, best_contrib = max(pos_contribs, key=lambda x: x[1])
+    role = "BOOST"
+else:
+    neg_contribs = [(i, c) for i, c in enumerate(patch_contributions) if c < 0]
+    ...
+    best_idx, best_contrib = min(neg_contribs, key=lambda x: x[1])
+    role = "SUPPRESS"
+```
+
+Unify to:
+```python
+matching = [(i, c) for i, c in enumerate(contribs) if np.sign(c) == np.sign(final_delta)]
+if not matching:
+    skipped_reasons['no_matching_direction'] += 1
+    continue
+best_idx, best_contrib = max(matching, key=lambda x: abs(x[1]))
+role = "BOOST" if final_delta > 0 else "SUPPRESS"
+```
+
+**7d. Extract `_resolve_prototype_path(debug_idx, debug_to_image_idx, path_mapping, image_dir)` helper**
+
+The dual image path resolution (simple `get_image_path` vs `prototype_path_mapping` dict) is inlined in both `save_case_study_individual_images` and the (deleted) `visualize_case_study`. Extract to one helper that encapsulates the branching.
+
+**7e. Untangle `run_case_study_analysis` prototype source setup**
+
+Lines 1107-1178 build prototype source configuration with deeply nested if/else, metadata file loading, and dict construction. Extract to:
+```python
+def _load_prototype_source(validation_activations_path, gated_faithfulness, val_image_dir):
+    """Load and configure prototype image source (validation or test set).
+    Returns (debug_to_image_idx, image_dir, path_mapping).
+    """
+```
+
+This reduces the main orchestrator to a clean sequence: load results → setup prototype source → per-layer loop → save combined.
+
+**7f. Replace inline z-score lambda**
+
+```python
+z_score = lambda series: (series - series.mean()) / (series.std() + 1e-9)
+```
+
+Replace with a named `_zscore(series)` function for readability.
+
+#### Hard constraints
+- No behavior changes to analysis outputs (same stats, same visualizations, same CSVs).
+- All tests pass.
+- Dependency graph preserved: `core → data → models → experiments`.
+- `models/sae_extraction.py` imports only from models/ and below (no cycle risk).
+
+#### Expected outcome
+- comparison.py: ~583 → ~450 lines (dead code removed, print helpers compressed).
+- case_studies.py: ~1294 → ~750 lines (SAE extraction out, dead viz out, rewritten internals).
+- New `models/sae_extraction.py`: ~230 lines (extracted from case_studies).
+- Total: ~1877 → ~1430 lines.
+- Latent CLIP bug fixed.
+- Clear separation: models/ handles extraction, experiments/ handles analysis.
+- case_studies.py internals are readable: single-responsibility helpers, no duplicated geometry/visualization/path logic.
 
 ---
 
