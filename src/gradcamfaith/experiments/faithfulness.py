@@ -4,21 +4,15 @@ Faithfulness evaluation framework.
 Shared perturbation infrastructure (patch masks, baseline perturbation, model
 inference, attribution normalization) used by both faithfulness metrics and SaCo.
 
-Orchestration layer that runs PatchPixelFlipping and FaithfulnessCorrelation,
-computes statistics, and saves results.
+Orchestration layer that runs PatchPixelFlipping and FaithfulnessCorrelation
+and computes statistics.
 """
 
 import gc
-import json
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
-
 import numpy as np
 import torch
 from PIL import Image
 
-from gradcamfaith.core.config import PipelineConfig
-from gradcamfaith.core.types import ClassificationResult
 from gradcamfaith.data.dataset_config import get_dataset_config
 
 
@@ -351,17 +345,19 @@ def _prepare_batch_data(config, batch_results, n_patches=196):
 # Reporting
 # ---------------------------------------------------------------------------
 
-def evaluate_and_report_faithfulness(config, model, device, classification_results):
-    """Evaluate faithfulness and report statistics.  Main entry point."""
+def compute_faithfulness(config, model, device, classification_results):
+    """Compute faithfulness metrics. Returns results dict (does not save).
+
+    Preferred entry point for pipeline.py which handles its own unified save.
+    """
     faithfulness_results, class_labels = evaluate_faithfulness_for_results(
         config, model, device, classification_results,
     )
-    dataset_config = get_dataset_config(config.file.dataset_name)
 
     results = _build_results_structure(config, faithfulness_results, class_labels)
     _print_faithfulness_summary(results['metrics'])
-    _save_faithfulness_results(config, results)
     return results
+
 
 
 def _build_results_structure(config, faithfulness_results, class_labels):
@@ -423,11 +419,4 @@ def _print_faithfulness_summary(metrics):
         print(f"  Avg trial std: {overall['avg_trial_std']:.4f}")
 
 
-def _save_faithfulness_results(config, results):
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-
-    json_path = config.file.output_dir / f"faithfulness_stats{config.file.output_suffix}_{timestamp}.json"
-    with open(json_path, 'w') as f:
-        json.dump(results, f, indent=2)
-    print(f"\nFaithfulness statistics saved to {json_path}")
 

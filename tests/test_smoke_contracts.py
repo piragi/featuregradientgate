@@ -82,6 +82,7 @@ def test_public_signature_contracts():
     assert _param_names(run_case_study_analysis) == [
         "experiment_path",
         "experiment_config",
+        "dataset",
         "layers",
         "n_top_images",
         "n_patches_per_image",

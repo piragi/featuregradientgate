@@ -5,7 +5,9 @@ Prepares data, classifies+explains each image, then runs faithfulness and
 SaCo analysis.  Debug I/O is isolated in private helpers at the bottom.
 """
 
+import json
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -20,7 +22,7 @@ from gradcamfaith.data.dataloader import create_dataloader
 from gradcamfaith.data.dataset_config import get_dataset_config
 from gradcamfaith.data.setup import prepare_dataset_if_needed
 from gradcamfaith.experiments.classify import classify_explain_single_image
-from gradcamfaith.experiments.faithfulness import evaluate_and_report_faithfulness
+from gradcamfaith.experiments.faithfulness import compute_faithfulness
 from gradcamfaith.experiments.saco import extract_saco_summary, run_binned_attribution_analysis
 
 # Suppress PIL debug logging
@@ -144,11 +146,12 @@ def run_unified_pipeline(
         model_for_analysis = CLIPModelWrapper(clip_classifier)
         print("Using CLIP wrapper for analysis")
 
-    # Run faithfulness evaluation if configured
+    # Run faithfulness evaluation (compute only — we save a unified file later)
+    faithfulness_data = {}
     if config.classify.analysis:
         print("Running faithfulness evaluation...")
         try:
-            evaluate_and_report_faithfulness(
+            faithfulness_data = compute_faithfulness(
                 config, model_for_analysis, device, results
             )
         except Exception as e:
@@ -157,10 +160,84 @@ def run_unified_pipeline(
     # Run SaCo attribution analysis
     print("Running SaCo attribution analysis...")
     saco_analysis = run_binned_attribution_analysis(config, model_for_analysis, results, device)
-    saco_results = extract_saco_summary(saco_analysis)
+
+    # Build unified metrics and save
+    unified_metrics = _build_unified_metrics(faithfulness_data, saco_analysis)
+    _save_unified_faithfulness_stats(config, faithfulness_data, saco_analysis)
 
     print("\nPipeline complete!")
-    return results, saco_results
+    return results, unified_metrics
+
+
+# ---------------------------------------------------------------------------
+# Unified metrics helpers
+# ---------------------------------------------------------------------------
+
+def _build_unified_metrics(faithfulness_data, saco_analysis):
+    """Build unified metric summary dict for results.json.
+
+    Combines SaCo summary with FC/PF summaries into a single ``metrics`` dict.
+    """
+    saco_summary = extract_saco_summary(saco_analysis)
+
+    metrics: Dict[str, Any] = {'SaCo': saco_summary}
+
+    # Add FC and PF summaries from faithfulness data
+    for metric_name in ('FaithfulnessCorrelation', 'PixelFlipping'):
+        metric_data = faithfulness_data.get('metrics', {}).get(metric_name, {})
+        overall = metric_data.get('overall', {})
+        if overall:
+            metrics[metric_name] = {
+                'mean': overall.get('mean', 0.0),
+                'std': overall.get('std', 0.0),
+                'n_samples': overall.get('count', 0),
+                'median': overall.get('median', 0.0),
+                'min': overall.get('min', 0.0),
+                'max': overall.get('max', 0.0),
+            }
+
+    return metrics
+
+
+def _save_unified_faithfulness_stats(config, faithfulness_data, saco_analysis):
+    """Save unified faithfulness stats with all 3 metrics + per-image metadata."""
+    if not saco_analysis and not faithfulness_data:
+        return
+
+    # Start from faithfulness data (has FC + PF with mean_scores, overall, by_class)
+    unified = dict(faithfulness_data) if faithfulness_data else {'dataset': config.file.dataset_name, 'metrics': {}}
+
+    # Inject SaCo per-image scores into metrics
+    fc_df = saco_analysis.get('faithfulness_correctness')
+    if fc_df is not None and not fc_df.empty:
+        saco_scores = fc_df['saco_score'].values
+        unified.setdefault('metrics', {})['SaCo'] = {
+            'overall': {
+                'count': len(saco_scores),
+                'mean': float(np.nanmean(saco_scores)),
+                'median': float(np.nanmedian(saco_scores)),
+                'std': float(np.nanstd(saco_scores)),
+                'min': float(np.nanmin(saco_scores)) if len(saco_scores) > 0 else 0.0,
+                'max': float(np.nanmax(saco_scores)) if len(saco_scores) > 0 else 0.0,
+            },
+            'mean_scores': saco_scores.tolist(),
+            'n_trials': 1,
+        }
+
+        # Add per-image classification metadata
+        unified['images'] = fc_df[
+            ['filename', 'predicted_class', 'predicted_idx', 'true_class', 'is_correct', 'confidence']
+        ].to_dict('records')
+
+    # Remove class_labels (replaced by richer 'images' array)
+    unified.pop('class_labels', None)
+
+    # Save
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    json_path = config.file.output_dir / f"faithfulness_stats{config.file.output_suffix}_{timestamp}.json"
+    with open(json_path, 'w') as f:
+        json.dump(unified, f, indent=2)
+    print(f"\nUnified faithfulness statistics saved to {json_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -168,21 +245,30 @@ def run_unified_pipeline(
 # ---------------------------------------------------------------------------
 
 def _accumulate_debug_info(debug_data_per_layer, debug_info):
-    """Accumulate per-image debug data into per-layer buffers."""
+    """Accumulate per-image debug data into per-layer buffers.
+
+    Collects only what case_studies.py needs:
+    - patch_attribution_deltas (from outer debug_info)
+    - sparse_indices, sparse_activations, sparse_contributions (from feature_gating)
+    """
     for layer_idx, layer_debug in debug_info.items():
         feature_gating = layer_debug.get('feature_gating', {})
         if layer_idx not in debug_data_per_layer:
             debug_data_per_layer[layer_idx] = {
-                'gate_values': [],
                 'patch_attribution_deltas': [],
-                'contribution_sum': [],
-                'total_contribution_magnitude': [],
+                'sparse_indices': [],
+                'sparse_activations': [],
+                'sparse_contributions': [],
             }
         buf = debug_data_per_layer[layer_idx]
-        buf['gate_values'].append(feature_gating.get('gate_values', np.array([])))
-        buf['patch_attribution_deltas'].append(layer_debug.get('patch_attribution_deltas', np.array([])))
-        buf['contribution_sum'].append(feature_gating.get('contribution_sum', np.array([])))
-        buf['total_contribution_magnitude'].append(feature_gating.get('total_contribution_magnitude', np.array([])))
+        buf['patch_attribution_deltas'].append(
+            layer_debug.get('patch_attribution_deltas', np.array([])))
+        buf['sparse_indices'].append(
+            feature_gating.get('sparse_features_indices', []))
+        buf['sparse_activations'].append(
+            feature_gating.get('sparse_features_activations', []))
+        buf['sparse_contributions'].append(
+            feature_gating.get('sparse_features_contributions', []))
 
 
 def _save_debug_outputs(config, results, debug_data_per_layer):
@@ -202,8 +288,8 @@ def _save_debug_outputs(config, results, debug_data_per_layer):
     for layer_idx, layer_data in debug_data_per_layer.items():
         np.savez_compressed(
             debug_dir / f"layer_{layer_idx}_debug.npz",
-            gate_values=np.array(layer_data['gate_values']),
             patch_attribution_deltas=np.array(layer_data['patch_attribution_deltas']),
-            contribution_sum=np.array(layer_data['contribution_sum']),
-            total_contribution_magnitude=np.array(layer_data['total_contribution_magnitude']),
+            sparse_indices=np.array(layer_data['sparse_indices'], dtype=object),
+            sparse_activations=np.array(layer_data['sparse_activations'], dtype=object),
+            sparse_contributions=np.array(layer_data['sparse_contributions'], dtype=object),
         )

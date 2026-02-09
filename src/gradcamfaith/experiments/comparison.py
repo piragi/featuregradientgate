@@ -9,74 +9,48 @@ import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
-import seaborn as sns
 
 warnings.filterwarnings('ignore')
 
 
-def cohens_d(group1: np.ndarray, group2: np.ndarray) -> float:
-    """Calculate Cohen's d effect size."""
-    n1, n2 = len(group1), len(group2)
-    var1, var2 = np.var(group1, ddof=1), np.var(group2, ddof=1)
-
-    # Pooled standard deviation
-    pooled_std = np.sqrt(((n1 - 1) * var1 + (n2 - 1) * var2) / (n1 + n2 - 2))
-
-    return (np.mean(group1) - np.mean(group2)) / pooled_std
-
-
 def load_experiment_data(experiment_path: Path) -> Dict[str, Any]:
-    """Load all data for a single experiment."""
+    """Load results and config for a single experiment."""
     results_file = experiment_path / "results.json"
     config_file = experiment_path / "experiment_config.json"
 
-    # Find faithfulness stats file
-    test_dir = experiment_path / "test"
-    faithfulness_files = list(test_dir.glob("faithfulness_stats_*.json"))
-
-    if not faithfulness_files:
-        raise FileNotFoundError(f"No faithfulness stats found in {test_dir}")
-
-    faithfulness_file = faithfulness_files[0]
-
-    # Load all files
     with open(results_file) as f:
         results = json.load(f)
 
     with open(config_file) as f:
         config = json.load(f)
 
-    with open(faithfulness_file) as f:
-        faithfulness = json.load(f)
-
-    return {'results': results, 'config': config, 'faithfulness': faithfulness, 'experiment_name': experiment_path.name}
+    return {'results': results, 'config': config, 'experiment_name': experiment_path.name}
 
 
 def extract_metrics(data: Dict[str, Any]) -> Dict[str, float]:
-    """Extract key metrics from experiment data."""
-    metrics = {}
+    """Extract key metrics from experiment data.
 
-    # SaCo metrics
-    saco = data['results']['saco_results']
+    Reads all 3 metrics from the unified ``results.json`` ``metrics`` key.
+    """
+    metrics = {}
+    results_metrics = data['results']['metrics']
+
+    # SaCo
+    saco = results_metrics['SaCo']
     metrics['saco_mean'] = saco['mean']
     metrics['saco_std'] = saco['std']
     metrics['saco_n'] = saco['n_samples']
 
-    # Faithfulness Correlation
-    faith_corr = data['faithfulness']['metrics']['FaithfulnessCorrelation']['overall']
-    metrics['faithfulness_correlation_mean'] = faith_corr['mean']
-    metrics['faithfulness_correlation_std'] = faith_corr['std']
-    metrics['faithfulness_correlation_n'] = faith_corr['count']
-
-    # PixelFlipping
-    pixel_flip = data['faithfulness']['metrics']['PixelFlipping']['overall']
-    metrics['pixelflipping_mean'] = pixel_flip['mean']
-    metrics['pixelflipping_std'] = pixel_flip['std']
-    metrics['pixelflipping_n'] = pixel_flip['count']
+    # FaithfulnessCorrelation and PixelFlipping
+    for metric_key, prefix in [('FaithfulnessCorrelation', 'faithfulness_correlation'),
+                                ('PixelFlipping', 'pixelflipping')]:
+        source = results_metrics[metric_key]
+        metrics[f'{prefix}_mean'] = source['mean']
+        metrics[f'{prefix}_std'] = source['std']
+        metrics[f'{prefix}_n'] = source['n_samples']
 
     return metrics
 
@@ -384,7 +358,7 @@ def classify_layer_type(feature_gradient_layers: List[str]) -> str:
         return 'multi'
 
 
-def calculate_composite_improvement(row: pd.Series, metrics: List[str] = None) -> float:
+def _average_percent_improvement(row: pd.Series, metrics: List[str] = None) -> float:
     """
     Calculate composite improvement across all three metrics.
 
@@ -405,6 +379,22 @@ def calculate_composite_improvement(row: pd.Series, metrics: List[str] = None) -
         return np.nan
 
     return np.mean(improvements)
+
+
+def _print_metric_improvements(row: pd.Series, indent: str = "        "):
+    """Print per-metric treatment vs vanilla comparison for a single experiment row."""
+    metrics = [
+        ('SaCo', 'saco'),
+        ('Faithfulness Correlation', 'faithfulness_correlation'),
+        ('Pixel Flipping', 'pixelflipping'),
+    ]
+    for label, key in metrics:
+        print(
+            f"{indent}{label}: {row[f'{key}_treatment_mean']:.4f} vs "
+            f"{row[f'{key}_vanilla_mean']:.4f} "
+            f"({row[f'{key}_percent_improvement']:+.2f}%, "
+            f"p={row[f'{key}_p_value']:.4f})"
+        )
 
 
 def identify_best_overall_performers(comparison_df: pd.DataFrame, sweep_df: pd.DataFrame):
@@ -431,7 +421,7 @@ def identify_best_overall_performers(comparison_df: pd.DataFrame, sweep_df: pd.D
     comparison_df['layer_type'] = layer_types
 
     # Calculate composite improvement for each configuration
-    comparison_df['composite_improvement'] = comparison_df.apply(calculate_composite_improvement, axis=1)
+    comparison_df['composite_improvement'] = comparison_df.apply(_average_percent_improvement, axis=1)
 
     datasets = comparison_df['dataset'].unique()
 
@@ -457,15 +447,7 @@ def identify_best_overall_performers(comparison_df: pd.DataFrame, sweep_df: pd.D
                 print(f"      Kappa: {best_single['kappa']}")
                 print(f"      Composite Improvement: {best_single['composite_improvement']:.2f}%")
                 print(f"      Individual Improvements:")
-                print(
-                    f"        SaCo: {best_single['saco_treatment_mean']:.4f} vs {best_single['saco_vanilla_mean']:.4f} ({best_single['saco_percent_improvement']:+.2f}%, p={best_single['saco_p_value']:.4f})"
-                )
-                print(
-                    f"        Faithfulness Correlation: {best_single['faithfulness_correlation_treatment_mean']:.4f} vs {best_single['faithfulness_correlation_vanilla_mean']:.4f} ({best_single['faithfulness_correlation_percent_improvement']:+.2f}%, p={best_single['faithfulness_correlation_p_value']:.4f})"
-                )
-                print(
-                    f"        Pixel Flipping: {best_single['pixelflipping_treatment_mean']:.4f} vs {best_single['pixelflipping_vanilla_mean']:.4f} ({best_single['pixelflipping_percent_improvement']:+.2f}%, p={best_single['pixelflipping_p_value']:.4f})"
-                )
+                _print_metric_improvements(best_single)
         else:
             print(f"\n  No single-layer configurations found")
 
@@ -481,15 +463,7 @@ def identify_best_overall_performers(comparison_df: pd.DataFrame, sweep_df: pd.D
                 print(f"      Kappa: {best_multi['kappa']}")
                 print(f"      Composite Improvement: {best_multi['composite_improvement']:.2f}%")
                 print(f"      Individual Improvements:")
-                print(
-                    f"        SaCo: {best_multi['saco_treatment_mean']:.4f} vs {best_multi['saco_vanilla_mean']:.4f} ({best_multi['saco_percent_improvement']:+.2f}%, p={best_multi['saco_p_value']:.4f})"
-                )
-                print(
-                    f"        Faithfulness Correlation: {best_multi['faithfulness_correlation_treatment_mean']:.4f} vs {best_multi['faithfulness_correlation_vanilla_mean']:.4f} ({best_multi['faithfulness_correlation_percent_improvement']:+.2f}%, p={best_multi['faithfulness_correlation_p_value']:.4f})"
-                )
-                print(
-                    f"        Pixel Flipping: {best_multi['pixelflipping_treatment_mean']:.4f} vs {best_multi['pixelflipping_vanilla_mean']:.4f} ({best_multi['pixelflipping_percent_improvement']:+.2f}%, p={best_multi['pixelflipping_p_value']:.4f})"
-                )
+                _print_metric_improvements(best_multi)
         else:
             print(f"\n  No multi-layer configurations found")
 
@@ -509,28 +483,21 @@ def identify_best_overall_performers(comparison_df: pd.DataFrame, sweep_df: pd.D
                         print(f"        Kappa: {best_method['kappa']}")
                         print(f"        Composite Improvement: {best_method['composite_improvement']:.2f}%")
                         print(f"        Individual Improvements:")
-                        print(
-                            f"          SaCo: {best_method['saco_treatment_mean']:.4f} vs {best_method['saco_vanilla_mean']:.4f} ({best_method['saco_percent_improvement']:+.2f}%, p={best_method['saco_p_value']:.4f})"
-                        )
-                        print(
-                            f"          Faithfulness Correlation: {best_method['faithfulness_correlation_treatment_mean']:.4f} vs {best_method['faithfulness_correlation_vanilla_mean']:.4f} ({best_method['faithfulness_correlation_percent_improvement']:+.2f}%, p={best_method['faithfulness_correlation_p_value']:.4f})"
-                        )
-                        print(
-                            f"          Pixel Flipping: {best_method['pixelflipping_treatment_mean']:.4f} vs {best_method['pixelflipping_vanilla_mean']:.4f} ({best_method['pixelflipping_percent_improvement']:+.2f}%, p={best_method['pixelflipping_p_value']:.4f})"
-                        )
+                        _print_metric_improvements(best_method, indent="          ")
 
     return comparison_df
 
 
-def save_results(comparison_df: pd.DataFrame, summary_df: pd.DataFrame):
+def save_results(comparison_df: pd.DataFrame, summary_df: pd.DataFrame, output_dir: Path = Path(".")):
     """Save results to CSV files."""
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    comparison_df.to_csv('detailed_sweep_comparison.csv', index=False)
-    summary_df.to_csv('sweep_summary_table.csv', index=False)
+    comparison_df.to_csv(output_dir / 'detailed_sweep_comparison.csv', index=False)
+    summary_df.to_csv(output_dir / 'sweep_summary_table.csv', index=False)
 
     print(f"\nResults saved to:")
-    print(f"  - detailed_sweep_comparison.csv")
-    print(f"  - sweep_summary_table.csv")
+    print(f"  - {output_dir / 'detailed_sweep_comparison.csv'}")
+    print(f"  - {output_dir / 'sweep_summary_table.csv'}")
 
 
 def main(sweep_dirs: List[str]):
@@ -566,16 +533,7 @@ def main(sweep_dirs: List[str]):
 if __name__ == "__main__":
     # Specific sweep directories to analyze
     sweep_dirs = [
-
-        # Test set
-        'experiments/feature_gradient_sweep_20260128_114325',
-        'experiments/feature_gradient_sweep_20260128_220546/',
-        'experiments/feature_gradient_sweep_20260129_100435/',
-
-        # Val set
-        # 'experiments/feature_gradient_sweep_20260129_103937',
-        # 'experiments/feature_gradient_sweep_20260129_173906',
-
+        "experiments/feature_gradient_sweep_20260209_225220/"
     ]
 
     print(f"Analyzing sweep directories: {sweep_dirs}")
