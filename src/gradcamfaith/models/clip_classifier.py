@@ -208,18 +208,12 @@ def create_clip_classifier_for_waterbirds(
 class CLIPModelWrapper(torch.nn.Module):
     """
     Wrapper that makes a CLIP classifier behave like a standard model for inference.
-    
+
     This is needed because the attribution binning code expects to call model(input)
     directly, but CLIP needs the full classifier with text embeddings.
     """
 
     def __init__(self, clip_classifier: CLIPClassifier):
-        """
-        Initialize the wrapper.
-        
-        Args:
-            clip_classifier: CLIPClassifier instance
-        """
         super().__init__()
         self.clip_classifier = clip_classifier
         self.training = False  # Always in eval mode for attribution
@@ -245,29 +239,12 @@ class CLIPModelWrapper(torch.nn.Module):
         return self
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
-        """
-        Forward method required by nn.Module.
-        
-        Args:
-            images: Input images tensor
-            
-        Returns:
-            Logits tensor
-        """
-        # Use the CLIP classifier without gradients for inference
+        """Forward pass that returns logits."""
         result = self.clip_classifier.forward(images, requires_grad=False)
         return result["logits"]
 
     def __call__(self, images: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass that returns logits.
-        
-        Args:
-            images: Input images tensor
-            
-        Returns:
-            Logits tensor
-        """
+        """Forward pass that returns logits."""
         return self.forward(images)
 
     @property
