@@ -182,13 +182,13 @@ This tracker is a required, evolving log for project state and near-term executi
 - WP-11 status: `done and accepted`
 - WP-12 status: `done and accepted`
 - WP-13 status: `done and accepted`
-- WP-14 status: `next — config cleanup, patch size constant, faithfulness batch loop dedup.`
-- WP-15 status: `planned — models/ cleanup, sweep.py refactor.`
-- What happened most recently: `WP-13 integrated and tagged accepted/wp-13. Full codebase audit completed across all 4 packages (core, data, models, experiments). Findings prioritized into WP-14 (Tier 1: high ROI) and WP-15 (Tier 2: moderate scope).`
-- Reviewer decision: `WP-13 accepted. WP-14/WP-15 plans approved by maintainer.`
-- What should happen next: `implement WP-14.`
-- Immediate next task (concrete): `create wp/WP-14-config-cleanup branch from integration HEAD, implement config.py cleanup + patch size utility + batch loop dedup.`
-- Immediate validation for that task: `all 14+3 tests pass. No behavior changes.`
+- WP-14 status: `done and accepted`
+- WP-15 status: `done and accepted`
+- What happened most recently: `WP-14 and WP-15 implemented and accepted. WP-15 amended to keep CLIPModelWrapper in models/ (model adapter) and extract run_model_forward_backward + setup_hooks from core/attribution.py to new models/inference.py.`
+- Reviewer decision: `WP-14 and WP-15 accepted.`
+- What should happen next: `define next workpackage(s) — Tier 3 candidates: case_studies.py decomposition, comparison.py cleanup, data/ cleanup.`
+- Immediate next task (concrete): `discuss scope for next WP with maintainer.`
+- Immediate validation for that task: `n/a`
 - Known blockers/risks now: `none`
 - Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ in a future WP.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
