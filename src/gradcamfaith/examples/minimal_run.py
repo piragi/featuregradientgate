@@ -106,7 +106,7 @@ def run_example(config: ExampleConfig) -> Dict[str, Any]:
     # Heavy imports deferred so dry-run stays fast
     import torch
 
-    from gradcamfaith.core.config import PipelineConfig
+    from gradcamfaith.core.config import FileConfig, PipelineConfig
     from gradcamfaith.data import get_dataset_config
     from gradcamfaith.models import run_unified_pipeline
     from gradcamfaith.models.load import load_model_for_dataset
@@ -120,8 +120,7 @@ def run_example(config: ExampleConfig) -> Dict[str, Any]:
     print(f"Dataset: {config.dataset_name} ({dataset_config.num_classes} classes)")
 
     pipeline_config = PipelineConfig()
-    pipeline_config.file.set_dataset(config.dataset_name)
-    pipeline_config.file.current_mode = config.current_mode
+    pipeline_config.file = FileConfig.for_dataset(config.dataset_name, current_mode=config.current_mode)
     pipeline_config.file.base_pipeline_dir = config.output_dir
 
     model, clip_classifier = load_model_for_dataset(dataset_config, device, pipeline_config)
@@ -135,8 +134,7 @@ def run_example(config: ExampleConfig) -> Dict[str, Any]:
     # --- Vanilla baseline (no gating) ---
     print("\n--- Vanilla TransLRP (baseline) ---")
     pipeline_config_vanilla = PipelineConfig()
-    pipeline_config_vanilla.file.set_dataset(config.dataset_name)
-    pipeline_config_vanilla.file.current_mode = config.current_mode
+    pipeline_config_vanilla.file = FileConfig.for_dataset(config.dataset_name, current_mode=config.current_mode)
     pipeline_config_vanilla.file.base_pipeline_dir = config.output_dir / "vanilla"
     pipeline_config_vanilla.classify.analysis = True
     pipeline_config_vanilla.classify.boosting.enable_feature_gradients = False
@@ -159,8 +157,7 @@ def run_example(config: ExampleConfig) -> Dict[str, Any]:
     # --- Feature-gradient gated ---
     print(f"\n--- Feature-Gradient Gated (layers={config.layers}) ---")
     pipeline_config_gated = PipelineConfig()
-    pipeline_config_gated.file.set_dataset(config.dataset_name)
-    pipeline_config_gated.file.current_mode = config.current_mode
+    pipeline_config_gated.file = FileConfig.for_dataset(config.dataset_name, current_mode=config.current_mode)
     pipeline_config_gated.file.base_pipeline_dir = config.output_dir / "gated"
     pipeline_config_gated.classify.analysis = True
     pipeline_config_gated.classify.boosting.enable_feature_gradients = True

@@ -102,13 +102,12 @@ def _build_pipeline_config(
     in run_single_experiment. Handles ImageNet CLIP setup.
     """
     pipeline_config = config.PipelineConfig()
-
-    pipeline_config.file.use_cached_original = False
-    pipeline_config.file.current_mode = current_mode
+    pipeline_config.file = config.FileConfig.for_dataset(
+        dataset_name, current_mode=current_mode, use_cached_original=False,
+    )
+    pipeline_config.file.base_pipeline_dir = output_dir
     pipeline_config.classify.analysis = True
     pipeline_config.classify.boosting.debug_mode = debug_mode
-    pipeline_config.file.set_dataset(dataset_name)
-    pipeline_config.file.base_pipeline_dir = output_dir
 
     if dataset_name == "imagenet":
         pipeline_config.classify.use_clip = True
@@ -204,7 +203,7 @@ def _load_dataset_resources(
     dataset_cfg = get_dataset_config(dataset_name)
 
     temp_config = config.PipelineConfig()
-    temp_config.file.set_dataset(dataset_name)
+    temp_config.file = config.FileConfig.for_dataset(dataset_name)
     if dataset_name == "imagenet":
         temp_config.classify.use_clip = True
         temp_config.classify.clip_model_name = "open-clip:laion/CLIP-ViT-B-32-DataComp.XL-s13B-b90K"
