@@ -184,11 +184,12 @@ This tracker is a required, evolving log for project state and near-term executi
 - WP-13 status: `done and accepted`
 - WP-14 status: `done and accepted`
 - WP-15 status: `done and accepted`
-- What happened most recently: `WP-14 and WP-15 implemented and accepted. WP-15 amended to keep CLIPModelWrapper in models/ (model adapter) and extract run_model_forward_backward + setup_hooks from core/attribution.py to new models/inference.py.`
+- WP-16 status: `planned`
+- What happened most recently: `WP-16 plan written — remove all waterbirds dataset support (never used).`
 - Reviewer decision: `WP-14 and WP-15 accepted.`
-- What should happen next: `define next workpackage(s) — Tier 3 candidates: case_studies.py decomposition, comparison.py cleanup, data/ cleanup.`
-- Immediate next task (concrete): `discuss scope for next WP with maintainer.`
-- Immediate validation for that task: `n/a`
+- What should happen next: `implement WP-16.`
+- Immediate next task (concrete): `implement WP-16 on wp/WP-16-remove-waterbirds branch.`
+- Immediate validation for that task: `uv run pytest — 14 pass, 3 skip. No "waterbird" references remain in src/.`
 - Known blockers/risks now: `none`
 - Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ in a future WP.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
@@ -922,6 +923,74 @@ Also make the vanilla baseline explicit in `_build_experiment_grid`:
 - `CLIPModelWrapper` correctly placed in experiments layer
 - `sae_resources.py` fails fast on missing layers (no silent partial returns)
 - `sweep.py` config builder decomposed into readable pieces
+
+---
+
+### WP-16 Concrete Plan (Remove Waterbirds Dataset Support)
+
+Goal: Remove all waterbirds-specific code paths, configs, and hardcoded dataset name checks. Waterbirds was never actually used and adds dead code throughout the stack. Rename the waterbirds-named CLIP factory to a generic name since it is used by ImageNet too. No behavior changes for the three supported datasets (imagenet, covidquex, hyperkvasir).
+
+#### Inventory of waterbirds references (5 files, ~100 lines to remove/edit)
+
+| File | What | Action |
+|---|---|---|
+| `data/dataset_config.py:67-70` | `create_waterbirds_transform()` | Delete |
+| `data/dataset_config.py:74` | Comment "same as waterbirds" in `create_imagenet_transform` | Rewrite comment |
+| `data/dataset_config.py:149-164` | `WATERBIRDS_CONFIG` constant | Delete |
+| `data/dataset_config.py:215` | `"waterbirds": WATERBIRDS_CONFIG` registry entry | Delete |
+| `data/prepare.py:4` | Module docstring mentions "Waterbirds" | Remove from list |
+| `data/prepare.py:190-246` | `prepare_waterbirds()` function | Delete |
+| `data/prepare.py:336` | `'waterbirds': prepare_waterbirds` converter entry | Delete |
+| `models/clip_classifier.py:160-205` | `create_clip_classifier_for_waterbirds()` | Rename → `create_clip_classifier`, remove waterbirds default prompts, require `class_names` param |
+| `models/load.py:45` | `dataset_config.name == "waterbirds"` hardcode in `use_clip` | Remove — CLIP usage is config-driven via `config.classify.use_clip` |
+| `models/load.py:64-66` | Import and call `create_clip_classifier_for_waterbirds` | Update to `create_clip_classifier` |
+| `models/sae_resources.py:20` | Docstring mentions "waterbirds" | Remove from example list |
+| `models/sae_resources.py:26-27` | `"waterbirds"` in CLIP SAE condition + comment | Remove `"waterbirds"` from list, update comment to say "CLIP" |
+
+#### Part 1: `data/dataset_config.py` — delete waterbirds config
+
+- Delete `create_waterbirds_transform()` (lines 67-70).
+- Rewrite `create_imagenet_transform` docstring: remove "(same as waterbirds)" → "CLIP preprocessing".
+- Delete `WATERBIRDS_CONFIG` block (lines 149-164).
+- Delete `"waterbirds": WATERBIRDS_CONFIG` from `DATASET_CONFIGS` registry.
+
+#### Part 2: `data/prepare.py` — delete waterbirds converter
+
+- Update module docstring: remove "Waterbirds" from the dataset list.
+- Delete `prepare_waterbirds()` function (lines 190-246).
+- Delete `'waterbirds': prepare_waterbirds` from `convert_dataset` converter map.
+
+#### Part 3: `models/clip_classifier.py` — rename factory to generic
+
+- Rename `create_clip_classifier_for_waterbirds` → `create_clip_classifier`.
+- Change parameter `custom_prompts: Optional[List[str]] = None` → `class_names: List[str]` (required, no default).
+- Remove the waterbirds default fallback (`if custom_prompts is None: class_names = ["landbird", "waterbird"]`).
+- Update docstring: "Create a CLIP classifier" (remove "specifically for Waterbirds dataset").
+- Remove "Default prompts for waterbirds" comment.
+
+#### Part 4: `models/load.py` — remove hardcoded waterbirds check
+
+- Line 45: change `use_clip = (config and config.classify.use_clip) or dataset_config.name == "waterbirds"` → `use_clip = config and config.classify.use_clip`.
+- Line 64: update import `create_clip_classifier_for_waterbirds` → `create_clip_classifier`.
+- Line 66-70: update call to `create_clip_classifier(...)` with `class_names=config.classify.clip_text_prompts` (prompts are now required, always provided from config).
+
+#### Part 5: `models/sae_resources.py` — remove waterbirds from SAE path
+
+- Line 20: remove "waterbirds" from docstring example list.
+- Line 26: change `dataset_name in ["waterbirds", "imagenet"]` → `dataset_name == "imagenet"`.
+- Line 27: update comment from "Use CLIP Vanilla B-32 SAE for waterbirds" → "Use CLIP Vanilla B-32 SAE".
+
+#### Hard constraints
+- No behavior changes for imagenet, covidquex, hyperkvasir.
+- All tests pass.
+- Dependency graph preserved.
+- Zero "waterbird" references in `src/` after completion.
+
+#### Expected outcome
+- 3 supported datasets: imagenet, covidquex, hyperkvasir.
+- CLIP classifier factory is generic (no dataset-specific name or defaults).
+- CLIP usage is purely config-driven (no hardcoded dataset name checks).
+- ~100 lines of dead code removed.
 
 ---
 

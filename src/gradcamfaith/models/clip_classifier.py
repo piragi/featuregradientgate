@@ -5,7 +5,7 @@ This module provides a wrapper to use CLIP's vision encoder (loaded as HookedViT
 for zero-shot classification, maintaining compatibility with the attribution pipeline.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import torch
 import torch.nn.functional as F
@@ -157,20 +157,20 @@ class CLIPClassifier:
         return result
 
 
-def create_clip_classifier_for_waterbirds(
+def create_clip_classifier(
     vision_model: Any,
     device: torch.device,
+    class_names: List[str],
     clip_model_name: str = "open-clip:laion/CLIP-ViT-B-32-DataComp.XL-s13B-b90K",
-    custom_prompts: Optional[List[str]] = None
 ) -> CLIPClassifier:
     """
-    Create a CLIP classifier specifically for Waterbirds dataset.
+    Create a CLIP classifier for zero-shot classification.
 
     Args:
         vision_model: HookedViT vision model
         device: Device to run on
+        class_names: Text prompts for each class (e.g. ["a photo of a cat", ...])
         clip_model_name: CLIP model name to load processor for
-        custom_prompts: Optional custom text prompts
 
     Returns:
         Configured CLIPClassifier
@@ -191,12 +191,6 @@ def create_clip_classifier_for_waterbirds(
     text_model, _, _ = open_clip.create_model_and_transforms(
         "ViT-B-32", pretrained="datacomp_xl_s13b_b90k", device=device
     )
-
-    # Default prompts for waterbirds
-    if custom_prompts is None:
-        class_names = ["landbird", "waterbird"]
-    else:
-        class_names = custom_prompts
 
     classifier = CLIPClassifier(
         vision_model=vision_model, text_model=text_model, processor=processor, class_names=class_names, device=device
