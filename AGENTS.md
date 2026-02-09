@@ -181,12 +181,14 @@ This tracker is a required, evolving log for project state and near-term executi
 - WP-10 status: `done and accepted`
 - WP-11 status: `done and accepted`
 - WP-12 status: `done and accepted`
-- WP-13 status: `in progress — I/O cleanup: remove dead writes, gate debug outputs, remove SaCo CSV cache.`
-- What happened most recently: `WP-13 implemented. I/O audit found ~8 write types in main pipeline, only 3 consumed downstream. Removed dead .npz, gated CSVs behind debug_mode, removed brittle use_cached_perturbed mechanism, extracted debug accumulation from pipeline.py main loop, consolidated debug_data/ → debug/ path, merged two debug flags into single debug_mode.`
-- Reviewer decision: `WP-12 accepted. WP-13 pending review.`
-- What should happen next: `review and integrate WP-13.`
-- Immediate next task (concrete): `push WP-13 branch, integrate into feature/team-research-restructure-plan, tag accepted/wp-13.`
-- Immediate validation for that task: `all 14+3 tests pass (including full-stack golden value test). Main pipeline flow reduced to 3 essential write types.`
+- WP-13 status: `done and accepted`
+- WP-14 status: `next — config cleanup, patch size constant, faithfulness batch loop dedup.`
+- WP-15 status: `planned — models/ cleanup, sweep.py refactor.`
+- What happened most recently: `WP-13 integrated and tagged accepted/wp-13. Full codebase audit completed across all 4 packages (core, data, models, experiments). Findings prioritized into WP-14 (Tier 1: high ROI) and WP-15 (Tier 2: moderate scope).`
+- Reviewer decision: `WP-13 accepted. WP-14/WP-15 plans approved by maintainer.`
+- What should happen next: `implement WP-14.`
+- Immediate next task (concrete): `create wp/WP-14-config-cleanup branch from integration HEAD, implement config.py cleanup + patch size utility + batch loop dedup.`
+- Immediate validation for that task: `all 14+3 tests pass. No behavior changes.`
 - Known blockers/risks now: `none`
 - Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ in a future WP.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
@@ -675,6 +677,253 @@ Goal: Declutter the main pipeline code flow by removing dead I/O writes, consoli
 - `run_unified_pipeline` main loop is scannable — debug accumulation extracted to helpers
 - `use_cached_perturbed` config field and SaCo CSV cache mechanism removed
 - I/O code in saco.py and faithfulness.py significantly shorter
+
+### WP-14 Concrete Plan (Config Cleanup + Patch Size Constant + Batch Loop Dedup)
+
+Goal: Reduce confusion in the core code path by cleaning up config dead weight, extracting the scattered patch-size magic into a single utility, and deduplicating the identical batch loop in the two faithfulness metric classes. No behavior changes.
+
+#### Part 1: `core/config.py` cleanup
+
+**1a. Remove redundant `mode_dir` property (lines 20-22)**
+
+`mode_dir` and `output_dir` are **identical** — both return `self.base_pipeline_dir / self.current_mode`. Three internal callers use `mode_dir` (`data_dir`, `vit_inputs_dir`, `perturbed_dir`, `mask_dir`). Change them to use `output_dir` instead and delete `mode_dir`.
+
+Concrete changes:
+- Delete `mode_dir` property (lines 20-22)
+- `data_dir`: `self.mode_dir` → `self.output_dir` (line 30)
+- `vit_inputs_dir`: `self.mode_dir` → `self.output_dir` (line 44)
+- `perturbed_dir`: `self.mode_dir` → `self.output_dir` (line 48)
+- `mask_dir`: `self.mode_dir` → `self.output_dir` (line 52)
+- `directories` list: `self.mode_dir` → `self.output_dir` (line 59) — this was a duplicate entry anyway since `self.output_dir` is already in the list at position 0
+- `directory_map`: remove `"mode_dir": self.mode_dir` entry (line 67)
+
+Verify: grep entire codebase for `mode_dir` — no external consumers.
+
+**1b. Consolidate `directories` and `directory_map` into one**
+
+`directories` (list) and `directory_map` (dict) maintain the same paths in parallel. Replace both with a single `directory_map` property. The `directories` property becomes `list(self.directory_map.values())`. On `PipelineConfig`, same delegation.
+
+Concrete changes in `FileConfig`:
+- Keep `directory_map` property (lines 62-74), remove the `"mode_dir"` entry (from 1a)
+- Rewrite `directories` property to: `return list(self.directory_map.values())`
+
+`PipelineConfig` (lines 179-187): same pattern — `directories` delegates to `self.file.directories`, `directory_map` delegates to `self.file.directory_map`. Both already do this. No change needed.
+
+**1c. Replace `set_dataset` mutation with factory pattern**
+
+`set_dataset()` (line 76-79) mutates `dataset_name` and `base_pipeline_dir` in place. Called from 5 sites: `minimal_run.py:123,138,162`, `case_studies.py:87`, `sweep.py:110,207`.
+
+Replace with `@classmethod` factory:
+```python
+@classmethod
+def for_dataset(cls, dataset_name: str, **kwargs) -> 'FileConfig':
+    return cls(
+        dataset_name=dataset_name,
+        base_pipeline_dir=Path(f"./data/{dataset_name}_unified/results"),
+        **kwargs,
+    )
+```
+
+Update all call sites from:
+```python
+pipeline_config.file.set_dataset(dataset_name)
+```
+To:
+```python
+pipeline_config.file = FileConfig.for_dataset(dataset_name)
+```
+
+Note: some callers set other FileConfig fields before `set_dataset`. Check each site to preserve field values. If a caller sets `current_mode` before `set_dataset`, it must pass `current_mode=...` to `for_dataset()` instead.
+
+Call sites (exhaustive):
+- `experiments/sweep.py:110` — `_build_pipeline_config`: sets `current_mode` on line 105, then calls `set_dataset`. Must pass `current_mode` to factory.
+- `experiments/sweep.py:207` — `_load_dataset_resources`: only calls `set_dataset`. Simple replacement.
+- `experiments/case_studies.py:87` — `run_case_study_analysis`: only calls `set_dataset`. Simple replacement.
+- `examples/minimal_run.py:123,138,162` — three calls. Check if `current_mode` or other fields are set before. If so, pass them to factory.
+
+Delete `set_dataset` method after all sites updated.
+
+**1d. Fix `analysis` field declaration (line 121)**
+
+`analysis = False` is a **class attribute**, not a dataclass field (missing type annotation). It works at runtime but is invisible to dataclass machinery (`asdict`, `__init__`). Change to proper field:
+```python
+analysis: bool = False
+```
+
+This has callers: `pipeline.py:148`, `sweep.py:108`, `minimal_run.py:141,165`. All set it to `True`. No behavior change — it already works as a class attribute; making it a proper field formalizes it.
+
+**1e. Leave `kappa` alone**
+
+`kappa` on `BoostingConfig` IS used — `sweep.py:121` writes it from experiment params, and `sweep.py:157` uses it in experiment directory naming. The comment says "sweep metadata only" which is correct. No action.
+
+#### Part 2: Extract patch size utility
+
+The expression `32 if n_patches == 49 else 16` appears in **5 locations**:
+- `experiments/faithfulness.py:116` — `normalize_patch_attribution`
+- `experiments/faithfulness_correlation.py:27` — `FaithfulnessCorrelation.__init__`
+- `experiments/pixel_flipping.py:29` — `PatchPixelFlipping.__init__`
+- `experiments/saco.py:183` — `_saco_for_image` (uses `model.cfg.patch_size` with fallback 16)
+- `experiments/case_studies.py:500` — uses `224 // patches_per_side` (different form, same logic)
+
+Create a single utility function in `experiments/faithfulness.py` (where the shared perturbation infra already lives):
+
+```python
+def patch_size_for_n_patches(n_patches: int) -> int:
+    """Derive patch pixel size from number of patches.
+
+    Standard ViT patch grids: 196 patches → 16px, 49 patches → 32px.
+    """
+    return 32 if n_patches == 49 else 16
+```
+
+Replace at each site:
+- `faithfulness.py:116` → `patch_size = patch_size_for_n_patches(n_patches)` (local call)
+- `faithfulness_correlation.py:27` → import and call `patch_size_for_n_patches`
+- `pixel_flipping.py:29` → import and call `patch_size_for_n_patches`
+- `saco.py:183` — currently reads from `model.cfg.patch_size` with fallback 16. This is actually better (reads from model metadata). Leave as-is, no change.
+- `case_studies.py:500` — derives from `patches_per_side`. Leave as-is (different computation path).
+
+Net: 3 call sites consolidated + 1 definition. `saco.py` and `case_studies.py` already derive patch size from model/geometry and don't need the utility.
+
+#### Part 3: Deduplicate faithfulness batch loop
+
+`PatchPixelFlipping.__call__` (pixel_flipping.py:33-50) and `FaithfulnessCorrelation.__call__` (faithfulness_correlation.py:32-49) are **character-for-character identical**:
+
+```python
+def __call__(self, model, x_batch, y_batch, a_batch, device=None, batch_size=256):
+    x_batch = np.asarray(x_batch)
+    y_batch = np.asarray(y_batch)
+    a_batch = np.asarray(a_batch)
+    scores = []
+    for start in range(0, len(x_batch), batch_size):
+        end = min(start + batch_size, len(x_batch))
+        scores.extend(
+            self.evaluate_batch(
+                model=model,
+                x_batch=x_batch[start:end],
+                y_batch=y_batch[start:end],
+                a_batch=a_batch[start:end],
+                device=device,
+            )
+        )
+    return scores
+```
+
+Both classes share the same interface: `__init__` sets `n_patches`, `patch_size`, `perturb_baseline` and class-specific params; `__call__` batches; `evaluate_batch` does the work.
+
+Extract a base class in `experiments/faithfulness.py` (where shared infra lives):
+
+```python
+class _BatchedFaithfulnessMetric:
+    """Base class for faithfulness metrics with batched evaluation."""
+
+    def __call__(self, model, x_batch, y_batch, a_batch, device=None, batch_size=256):
+        x_batch = np.asarray(x_batch)
+        y_batch = np.asarray(y_batch)
+        a_batch = np.asarray(a_batch)
+        scores = []
+        for start in range(0, len(x_batch), batch_size):
+            end = min(start + batch_size, len(x_batch))
+            scores.extend(
+                self.evaluate_batch(
+                    model=model,
+                    x_batch=x_batch[start:end],
+                    y_batch=y_batch[start:end],
+                    a_batch=a_batch[start:end],
+                    device=device,
+                )
+            )
+        return scores
+
+    def evaluate_batch(self, model, x_batch, y_batch, a_batch, device=None):
+        raise NotImplementedError
+```
+
+Then:
+- `PatchPixelFlipping` inherits `_BatchedFaithfulnessMetric`, keeps `__init__` and `evaluate_batch`, deletes `__call__`
+- `FaithfulnessCorrelation` inherits `_BatchedFaithfulnessMetric`, keeps `__init__`, `evaluate_batch`, `_compute_spearman_correlation`, deletes `__call__`
+
+Import changes:
+- `pixel_flipping.py` adds: `from gradcamfaith.experiments.faithfulness import _BatchedFaithfulnessMetric`
+- `faithfulness_correlation.py` adds: `from gradcamfaith.experiments.faithfulness import _BatchedFaithfulnessMetric`
+
+#### Hard constraints
+- No behavior changes. Same metrics, same outputs, same file formats.
+- All tests pass (`uv run pytest tests/`).
+- Public API signatures unchanged: `run_unified_pipeline`, `run_parameter_sweep`, `run_single_experiment`, etc.
+- `PipelineConfig.directories` and `PipelineConfig.directory_map` still work (same return types).
+
+#### Expected outcome
+- `config.py`: ~10 fewer lines, no redundant properties, no mutable setter, `analysis` properly declared
+- Patch size magic consolidated: 1 definition replaces 3 inline expressions
+- Batch loop: 1 base class replaces 2 identical `__call__` methods (~18 lines each)
+- Total net: ~-40 lines, significantly less confusion in core path
+
+---
+
+### WP-15 Concrete Plan (Models Cleanup + Sweep Refactor)
+
+Goal: Fix structural issues in `models/` (silent failures, misplaced adapter, duplicate assignment) and improve `sweep.py` readability (split config builder, make vanilla baseline explicit). No behavior changes.
+
+#### Part 1: `models/load.py` cleanup
+
+**1a. Remove duplicate `clip_model_name` assignment**
+
+Lines 41 and 53 both compute `clip_model_name = config.classify.clip_model_name if config else "openai/clip-vit-base-patch32"`. Assign once at line 41, delete the duplicate at line 53.
+
+**1b. Add validation after model load**
+
+After both the CLIP path and the ViT path, assert the returned model has the expected interface attributes (`cfg`, `cfg.n_layers`, `cfg.patch_size`). Raise clear `ValueError` with model type and missing attribute if not.
+
+#### Part 2: `models/clip_classifier.py` — move `CLIPModelWrapper` to experiments
+
+`CLIPModelWrapper` (lines 208-279) is a `torch.nn.Module` adapter that wraps `CLIPClassifier` to look like a standard PyTorch model. It's only imported by `experiments/pipeline.py:143`. It belongs in the experiments layer, not models.
+
+Concrete changes:
+- Move `CLIPModelWrapper` class and `create_clip_classifier_for_waterbirds` factory to a new file `experiments/adapters.py`
+- Update `experiments/pipeline.py:143` import: `from gradcamfaith.experiments.adapters import CLIPModelWrapper`
+- Update `experiments/sweep.py` if it imports `create_clip_classifier_for_waterbirds` (check)
+- `models/load.py:51` imports `create_clip_classifier_for_waterbirds` — update to `from gradcamfaith.experiments.adapters import create_clip_classifier_for_waterbirds`
+
+Wait — this creates a **cycle**: `models/load.py` → `experiments/adapters.py` → potentially back to models. Check: does `create_clip_classifier_for_waterbirds` import from models? If so, it cannot move.
+
+**Resolution**: Only move `CLIPModelWrapper` (which has no models/ imports). Keep `create_clip_classifier_for_waterbirds` in `models/clip_classifier.py` (it's a model factory, correctly placed). Move only `CLIPModelWrapper` to `experiments/adapters.py`.
+
+#### Part 3: `models/sae_resources.py` — fail explicitly on missing layers
+
+Current behavior: if a requested layer's SAE file doesn't exist, the function prints a warning and continues, returning a partial dict. Downstream code that expects all layers will crash with a confusing `KeyError`.
+
+Change: after the loading loop, check if any requested layers are missing from `resources`. If so, raise `FileNotFoundError` listing the missing layers and their expected paths.
+
+#### Part 4: `experiments/sweep.py` — split `_build_pipeline_config`
+
+`_build_pipeline_config` (lines 92-126) does three things:
+1. Base config construction (PipelineConfig, set dataset, set mode)
+2. CLIP configuration (if imagenet)
+3. Boosting configuration (layers, gate, clamp_max, etc.)
+
+Split into:
+- `_build_pipeline_config` — keeps steps 1+2+3 but calls helpers
+- `_configure_clip_for_imagenet(pipeline_config, dataset_name)` — extracted CLIP setup (lines 113-117)
+- `_configure_boosting(pipeline_config, experiment_params)` — extracted boosting setup (lines 119-124)
+
+Also make the vanilla baseline explicit in `_build_experiment_grid`:
+- Add docstring noting that the first experiment is always the vanilla baseline with `enable_feature_gradients=False`
+- Current behavior is correct but undocumented
+
+#### Hard constraints
+- No behavior changes. Same metrics, same outputs, same experiment names.
+- All tests pass.
+- Dependency graph preserved: `core → data → models → experiments` (no new cycles).
+- Public API signatures unchanged.
+
+#### Expected outcome
+- `models/load.py`: no duplicate assignment, validated model interface
+- `CLIPModelWrapper` correctly placed in experiments layer
+- `sae_resources.py` fails fast on missing layers (no silent partial returns)
+- `sweep.py` config builder decomposed into readable pieces
+
+---
 
 ### Decision Log
 - **WP-01**: Added `[build-system]` (hatchling) and `[tool.hatch.build.targets.wheel]` to pyproject.toml to make `src/gradcamfaith` an installable package. This is required for absolute imports (`from gradcamfaith.core.config import ...`) to work. `uv sync` installs the package in dev mode automatically.
