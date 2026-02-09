@@ -18,16 +18,12 @@ class FileConfig:
     use_cached_original: bool = True
 
     @property
-    def mode_dir(self) -> Path:
-        return self.base_pipeline_dir / self.current_mode
-
-    @property
     def output_dir(self) -> Path:
         return self.base_pipeline_dir / self.current_mode
 
     @property
     def data_dir(self) -> Path:
-        return self.mode_dir / "preprocessed"
+        return self.output_dir / "preprocessed"
 
     @property
     def cache_dir(self) -> Path:
@@ -41,42 +37,42 @@ class FileConfig:
 
     @property
     def vit_inputs_dir(self) -> Path:
-        return self.mode_dir / "vit_inputs"
+        return self.output_dir / "vit_inputs"
 
     @property
     def perturbed_dir(self) -> Path:
-        return self.mode_dir / "patches"  # Patches of perturbed images
+        return self.output_dir / "patches"  # Patches of perturbed images
 
     @property
     def mask_dir(self) -> Path:
-        return self.mode_dir / "patch_masks"
-
-    @property
-    def directories(self) -> List[Path]:
-        """Return a list of all directories used by the pipeline."""
-        return [
-            self.output_dir, self.data_dir, self.cache_dir, self.attribution_dir, self.vit_inputs_dir,
-            self.perturbed_dir, self.mask_dir, self.mode_dir
-        ]
+        return self.output_dir / "patch_masks"
 
     @property
     def directory_map(self) -> Dict[str, Path]:
         """Return a map of all directories."""
         return {
             "output_dir": self.output_dir,
-            "mode_dir": self.mode_dir,
             "data": self.data_dir,
             "cache": self.cache_dir,
             "attribution": self.attribution_dir,
             "vit_inputs": self.vit_inputs_dir,
             "perturbed": self.perturbed_dir,
-            "masks": self.mask_dir
+            "masks": self.mask_dir,
         }
 
-    def set_dataset(self, dataset_name: str):
-        """Update the dataset name and base pipeline directory."""
-        self.dataset_name = dataset_name
-        self.base_pipeline_dir = Path(f"./data/{dataset_name}_unified/results")
+    @property
+    def directories(self) -> List[Path]:
+        """Return a list of all directories used by the pipeline."""
+        return list(self.directory_map.values())
+
+    @classmethod
+    def for_dataset(cls, dataset_name: str, **kwargs) -> 'FileConfig':
+        """Create a FileConfig for the given dataset with default paths."""
+        return cls(
+            dataset_name=dataset_name,
+            base_pipeline_dir=Path(f"./data/{dataset_name}_unified/results"),
+            **kwargs,
+        )
 
 
 @dataclass
@@ -118,7 +114,7 @@ class ClassificationConfig:
     clip_model_name: str = "openai/clip-vit-base-patch16"
     clip_text_prompts: Optional[List[str]] = None  # If None, uses dataset defaults
 
-    analysis = False
+    analysis: bool = False
 
     # Device configuration
     device: Optional[str] = None  # None will use CUDA if available

@@ -84,7 +84,7 @@ def _extract_sae_activations(
     print(f"Dataset: {dataset_name} ({dataset_config.num_classes} classes)")
 
     temp_config = config.PipelineConfig()
-    temp_config.file.set_dataset(dataset_name)
+    temp_config.file = config.FileConfig.for_dataset(dataset_name)
     if use_clip:
         temp_config.classify.use_clip = True
         temp_config.classify.clip_model_name = "open-clip:laion/CLIP-ViT-B-32-DataComp.XL-s13B-b90K"
@@ -161,13 +161,14 @@ def _extract_sae_activations(
                     codes = codes[0]
                 codes = codes[1:]  # Remove CLS
 
-                # Convert to sparse format (threshold = 0.1)
+                # Convert to sparse format
+                active_threshold = config.BoostingConfig.active_feature_threshold
                 sparse_indices_per_patch = []
                 sparse_activations_per_patch = []
 
                 for patch_idx in range(codes.shape[0]):
                     patch_codes = codes[patch_idx]
-                    active_mask = patch_codes > 0.1
+                    active_mask = patch_codes > active_threshold
                     sparse_indices_per_patch.append(torch.where(active_mask)[0].numpy())
                     sparse_activations_per_patch.append(patch_codes[active_mask].numpy())
 

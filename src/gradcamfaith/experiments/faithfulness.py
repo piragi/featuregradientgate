@@ -107,13 +107,21 @@ def predict_on_batch(model, x_batch, y_batch, device=None, use_softmax=False):
     return preds
 
 
+def patch_size_for_n_patches(n_patches: int) -> int:
+    """Derive patch pixel size from number of patches.
+
+    Standard ViT patch grids: 196 patches -> 16px, 49 patches -> 32px.
+    """
+    return 32 if n_patches == 49 else 16
+
+
 def normalize_patch_attribution(attribution, n_patches=196):
     """Convert an attribution map to a flat patch vector of length *n_patches*.
 
     Handles (3, 224, 224), (224, 224), (grid, grid), and already-flat inputs.
     Returns None if the result cannot match *n_patches*.
     """
-    patch_size = 32 if n_patches == 49 else 16
+    patch_size = patch_size_for_n_patches(n_patches)
     grid_size = int(np.sqrt(n_patches))
 
     attr = np.asarray(attribution)
@@ -137,6 +145,35 @@ def normalize_patch_attribution(attribution, n_patches=196):
         return None
 
     return attr.astype(np.float32)
+
+
+# ---------------------------------------------------------------------------
+# Batched metric base class
+# ---------------------------------------------------------------------------
+
+class _BatchedFaithfulnessMetric:
+    """Base class for faithfulness metrics with batched evaluation."""
+
+    def __call__(self, model, x_batch, y_batch, a_batch, device=None, batch_size=256):
+        x_batch = np.asarray(x_batch)
+        y_batch = np.asarray(y_batch)
+        a_batch = np.asarray(a_batch)
+        scores = []
+        for start in range(0, len(x_batch), batch_size):
+            end = min(start + batch_size, len(x_batch))
+            scores.extend(
+                self.evaluate_batch(
+                    model=model,
+                    x_batch=x_batch[start:end],
+                    y_batch=y_batch[start:end],
+                    a_batch=a_batch[start:end],
+                    device=device,
+                )
+            )
+        return scores
+
+    def evaluate_batch(self, model, x_batch, y_batch, a_batch, device=None):
+        raise NotImplementedError
 
 
 # ---------------------------------------------------------------------------
