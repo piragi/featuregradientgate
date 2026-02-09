@@ -140,7 +140,7 @@ def run_unified_pipeline(
     # For CLIP models, wrap the classifier for both faithfulness and attribution analysis
     model_for_analysis = model
     if clip_classifier is not None:
-        from gradcamfaith.models.clip_classifier import CLIPModelWrapper
+        from gradcamfaith.experiments.adapters import CLIPModelWrapper
         model_for_analysis = CLIPModelWrapper(clip_classifier)
         print("Using CLIP wrapper for analysis")
 

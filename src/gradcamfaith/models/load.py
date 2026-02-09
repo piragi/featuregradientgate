@@ -14,6 +14,19 @@ from gradcamfaith.core.config import PipelineConfig
 from gradcamfaith.data.dataset_config import DatasetConfig
 
 
+def _validate_model_interface(model, model_type: str):
+    """Validate that the loaded model has the expected HookedViT interface."""
+    for attr_path in ("cfg", "cfg.n_layers", "cfg.patch_size"):
+        obj = model
+        for part in attr_path.split("."):
+            obj = getattr(obj, part, None)
+            if obj is None:
+                raise ValueError(
+                    f"{model_type} model missing expected attribute '{attr_path}'. "
+                    f"Got type {type(model).__name__}."
+                )
+
+
 def load_model_for_dataset(
     dataset_config: DatasetConfig, device: torch.device, config: Optional[PipelineConfig] = None
 ):
@@ -50,7 +63,6 @@ def load_model_for_dataset(
         # Create CLIP classifier for this model
         from gradcamfaith.models.clip_classifier import create_clip_classifier_for_waterbirds
         print("Creating CLIP classifier...")
-        clip_model_name = config.classify.clip_model_name if config else "openai/clip-vit-base-patch32"
         clip_classifier = create_clip_classifier_for_waterbirds(
             vision_model=model,
             device=device,
@@ -58,6 +70,7 @@ def load_model_for_dataset(
             custom_prompts=config.classify.clip_text_prompts if config.classify.clip_text_prompts else None
         )
 
+        _validate_model_interface(model, "CLIP")
         return model, clip_classifier
 
     # Original ViT loading code
@@ -99,4 +112,5 @@ def load_model_for_dataset(
     model.load_state_dict(converted_weights)
 
     model.to(device).eval()
+    _validate_model_interface(model, "ViT")
     return model, None  # No CLIP classifier for regular ViT models

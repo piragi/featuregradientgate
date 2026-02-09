@@ -55,4 +55,11 @@ def load_steering_resources(layers: List[int], dataset_name: Optional[str] = Non
         except Exception as e:
             print(f"Error loading SAE for {dataset_name} layer {layer_idx}: {e}")
 
+    missing = [l for l in layers if l not in resources]
+    if missing:
+        raise FileNotFoundError(
+            f"SAE weights missing for {dataset_name} layers {missing}. "
+            f"Expected paths: data/sae_{dataset_name}/layer_<idx>/"
+        )
+
     return resources

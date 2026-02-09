@@ -109,20 +109,31 @@ def _build_pipeline_config(
     pipeline_config.classify.analysis = True
     pipeline_config.classify.boosting.debug_mode = debug_mode
 
-    if dataset_name == "imagenet":
-        pipeline_config.classify.use_clip = True
-        pipeline_config.classify.clip_model_name = "open-clip:laion/CLIP-ViT-B-32-DataComp.XL-s13B-b90K"
-        dataset_cfg = get_dataset_config(dataset_name)
-        pipeline_config.classify.clip_text_prompts = [f"a photo of a {cls}" for cls in dataset_cfg.class_names]
-
-    pipeline_config.classify.boosting.enable_feature_gradients = experiment_params['use_feature_gradients']
-    pipeline_config.classify.boosting.feature_gradient_layers = experiment_params.get('feature_gradient_layers', [])
-    pipeline_config.classify.boosting.kappa = experiment_params.get('kappa', 50.0)
-    pipeline_config.classify.boosting.gate_construction = experiment_params.get('gate_construction', 'combined')
-    pipeline_config.classify.boosting.shuffle_decoder = experiment_params.get('shuffle_decoder', False)
-    pipeline_config.classify.boosting.steering_layers = []
+    _configure_clip_for_imagenet(pipeline_config, dataset_name)
+    _configure_boosting(pipeline_config, experiment_params)
 
     return pipeline_config
+
+
+def _configure_clip_for_imagenet(pipeline_config: config.PipelineConfig, dataset_name: str):
+    """Set CLIP model and text prompts when running on ImageNet."""
+    if dataset_name != "imagenet":
+        return
+    pipeline_config.classify.use_clip = True
+    pipeline_config.classify.clip_model_name = "open-clip:laion/CLIP-ViT-B-32-DataComp.XL-s13B-b90K"
+    dataset_cfg = get_dataset_config(dataset_name)
+    pipeline_config.classify.clip_text_prompts = [f"a photo of a {cls}" for cls in dataset_cfg.class_names]
+
+
+def _configure_boosting(pipeline_config: config.PipelineConfig, experiment_params: Dict[str, Any]):
+    """Apply boosting/gating parameters from one experiment grid entry."""
+    boosting = pipeline_config.classify.boosting
+    boosting.enable_feature_gradients = experiment_params['use_feature_gradients']
+    boosting.feature_gradient_layers = experiment_params.get('feature_gradient_layers', [])
+    boosting.kappa = experiment_params.get('kappa', 50.0)
+    boosting.gate_construction = experiment_params.get('gate_construction', 'combined')
+    boosting.shuffle_decoder = experiment_params.get('shuffle_decoder', False)
+    boosting.steering_layers = []
 
 
 def _build_experiment_grid(
@@ -134,12 +145,15 @@ def _build_experiment_grid(
 ) -> List[Tuple[str, Dict[str, Any]]]:
     """Generate the full experiment list: vanilla baseline + all gated combinations.
 
+    The first entry is always the vanilla baseline (``enable_feature_gradients=False``).
+    This provides an ungated reference run against which all gated experiments are compared.
+
     Returns:
         List of (experiment_name, experiment_params) tuples.
-        First entry is always the vanilla baseline.
     """
     experiments: List[Tuple[str, Dict[str, Any]]] = []
 
+    # Vanilla baseline — ungated TransLRP attribution (always first)
     experiments.append(("vanilla", {
         'use_feature_gradients': False,
         'feature_gradient_layers': [],
