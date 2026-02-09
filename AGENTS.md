@@ -180,12 +180,13 @@ This tracker is a required, evolving log for project state and near-term executi
 - WP-09 status: `done and accepted`
 - WP-10 status: `done and accepted`
 - WP-11 status: `done and accepted`
-- WP-12 status: `done — SaCo simplification + perturbation bugfix. saco.py 429→324L. Fixed spatial misalignment in perturbation (PIL round-trip applied mask at wrong resolution), rewrote calculate_saco as clear pairwise loop, removed dead fields, simplified inference and reporting. Golden SaCo values updated (gated mean: 0.2633→0.3217).`
-- What happened most recently: `WP-12 executed. During implementation, discovered and fixed two bugs in SaCo: (1) old PIL perturbation had spatial misalignment — mask designed for 224x224 was resized to original image resolution, perturbed there, then resize+crop distorted patch boundaries (489 unmasked pixels changed, non-uniform fill with std=0.18 per channel). Fixed by perturbing directly on cached tensor in model input space. (2) calculate_saco rewrite initially had wrong formula (used abs(attr_diff) instead of signed attr_diff, and missed descending sort requirement). Both fixed and verified with 10k-trial equivalence tests. Golden test values updated.`
-- Reviewer decision: `pending WP-12 review.`
-- What should happen next: `integrate WP-12, tag accepted/wp-12.`
-- Immediate next task (concrete): `push WP-12 branch, integrate into feature/team-research-restructure-plan, tag accepted/wp-12.`
-- Immediate validation for that task: `all 14+3 tests pass on integration branch (including full-stack golden value test).`
+- WP-12 status: `done and accepted`
+- WP-13 status: `in progress — I/O cleanup: remove dead writes, gate debug outputs, remove SaCo CSV cache.`
+- What happened most recently: `WP-13 implemented. I/O audit found ~8 write types in main pipeline, only 3 consumed downstream. Removed dead .npz, gated CSVs behind debug_mode, removed brittle use_cached_perturbed mechanism, extracted debug accumulation from pipeline.py main loop, consolidated debug_data/ → debug/ path, merged two debug flags into single debug_mode.`
+- Reviewer decision: `WP-12 accepted. WP-13 pending review.`
+- What should happen next: `review and integrate WP-13.`
+- Immediate next task (concrete): `push WP-13 branch, integrate into feature/team-research-restructure-plan, tag accepted/wp-13.`
+- Immediate validation for that task: `all 14+3 tests pass (including full-stack golden value test). Main pipeline flow reduced to 3 essential write types.`
 - Known blockers/risks now: `none`
 - Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ in a future WP.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
@@ -603,6 +604,78 @@ Current reporting block (lines 348-391) mixes post-hoc analysis, summary printin
 - CSV output format may lose columns (`class_changed`, `confidence_delta_abs`, `bin_attribution_bias`) — these are unused analysis artifacts.
 - SaCo score values will differ slightly from pre-WP-12 due to perturbation path change. This is accepted.
 
+### WP-13 Concrete Plan (I/O Cleanup)
+
+Goal: Declutter the main pipeline code flow by removing dead I/O writes, consolidating debug outputs into a gated `debug/` subdirectory, and removing the brittle SaCo CSV cache. No behavior changes to metrics or analysis.
+
+**Principle:** The main pipeline produces only what's consumed downstream. Everything else is gated behind `debug_mode` and written to `output_dir/debug/`.
+
+#### I/O Audit Summary
+
+**Always saved (consumed by downstream code):**
+
+| What | Format | Written by | Read by |
+|------|--------|-----------|---------|
+| `.npy` attributions (per image) | npy | `classify.py:37,39` | `faithfulness.py:295`, `saco.py:138` |
+| JSON cache (per ClassificationResult) | JSON | `io_utils.py:47` | `io_utils.py:31` |
+| `faithfulness_stats_*.json` | JSON | `faithfulness.py:392` | `comparison.py:39`, `case_studies.py:288` |
+
+**Never consumed (remove or gate behind debug):**
+
+| What | Format | Written by | Action |
+|------|--------|-----------|--------|
+| `results_{dataset}_unified.csv` | CSV | `pipeline.py:181` | Move to debug |
+| `faithfulness_scores_*.npz` | npz | `faithfulness.py:399` | Delete (data already in JSON) |
+| `{ds_name}_bin_results.csv` | CSV | `saco.py:284` | Move to debug |
+| `analysis_*_binned_*.csv` (3 timestamped files) | CSV | `saco.py:287` | Delete entirely |
+| SaCo CSV cache load (`use_cached_perturbed`) | CSV | `saco.py:217-222` | Delete (brittle) |
+
+#### Config changes
+
+**`core/config.py`:**
+- Remove: `use_cached_perturbed: str = ""` from `FileConfig`
+- Consolidate debug flags: single `debug_mode` on `BoostingConfig` gates ALL debug I/O (gate/feature data collection, classification CSV, SaCo bin CSV, debug .npz). Removed redundant `save_debug_outputs` from `FileConfig`.
+
+#### Changes by file
+
+**`experiments/pipeline.py`:**
+- Gate `save_classification_results_to_csv` behind `debug_mode`
+- Write to `output_dir/debug/classification_results.csv` instead of `output_dir/results_{dataset}_unified.csv`
+- Extract ~60 lines of debug accumulation (per-image loop body) into `_accumulate_debug_info` helper
+- Extract debug saving (classification CSV + gate/attribution .npz) into `_save_debug_outputs` helper
+- Consolidate debug .npz output from `output_dir/debug_data/` → `output_dir/debug/`
+
+**`experiments/faithfulness.py` (`_save_faithfulness_results`):**
+- Delete the `.npz` save — data already in JSON (`mean_scores`, `std_scores` as lists)
+- Clean up function signature (remove unused `faithfulness_results` and `class_labels` params)
+- Keep JSON save unchanged (consumed by `comparison.py:39`, `case_studies.py:288`)
+
+**`experiments/saco.py` (`run_binned_attribution_analysis`):**
+- Remove `use_cached_perturbed` cache load in `_get_or_compute_binned_results`
+- Gate `bin_results_df.to_csv()` behind `debug_mode`, write to `output_dir/debug/saco_bin_results.csv`
+- Delete the timestamped analysis CSV loop entirely
+- Remove unused `datetime` import
+
+**`experiments/sweep.py`:**
+- Remove `pipeline_config.file.use_cached_perturbed = ""` — field no longer exists
+
+**`experiments/case_studies.py`:**
+- Rename `debug_data/` path constant → `debug/` (5 sites: extraction writer, existence check, `load_debug_data`, `load_activation_data`) — consistent with pipeline.py's new output path
+
+#### Hard constraints
+- No metric or algorithm changes.
+- `.npy` attributions always saved (hard requirement).
+- Faithfulness JSON always saved (consumed by `comparison.py`, `case_studies.py`).
+- No changes to what `run_unified_pipeline` returns.
+- All tests pass.
+
+#### Expected outcome
+- Main pipeline flow has 3 write types (npy, JSON cache, faithfulness JSON) instead of ~8
+- Debug outputs consolidated in `output_dir/debug/` subdirectory (was split across `debug_data/` and root output dir)
+- `run_unified_pipeline` main loop is scannable — debug accumulation extracted to helpers
+- `use_cached_perturbed` config field and SaCo CSV cache mechanism removed
+- I/O code in saco.py and faithfulness.py significantly shorter
+
 ### Decision Log
 - **WP-01**: Added `[build-system]` (hatchling) and `[tool.hatch.build.targets.wheel]` to pyproject.toml to make `src/gradcamfaith` an installable package. This is required for absolute imports (`from gradcamfaith.core.config import ...`) to work. `uv sync` installs the package in dev mode automatically.
 - **WP-01**: Internal imports within the package use absolute paths (`from gradcamfaith.core.config import ...`), not relative imports, for clarity.
@@ -992,7 +1065,7 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Integrate WP-12, tag `accepted/wp-12`.
+1. Complete WP-13 (I/O cleanup).
 2. Assess next priorities with maintainer:
    - Sweep compression (resource lifecycle extraction to `models/`, deferred from WP-06D).
    - `case_studies.py` and `comparison.py` compression.

@@ -104,7 +104,6 @@ def _build_pipeline_config(
     pipeline_config = config.PipelineConfig()
 
     pipeline_config.file.use_cached_original = False
-    pipeline_config.file.use_cached_perturbed = ""
     pipeline_config.file.current_mode = current_mode
     pipeline_config.classify.analysis = True
     pipeline_config.classify.boosting.debug_mode = debug_mode

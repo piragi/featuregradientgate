@@ -323,7 +323,7 @@ def evaluate_and_report_faithfulness(config, model, device, classification_resul
 
     results = _build_results_structure(config, faithfulness_results, class_labels)
     _print_faithfulness_summary(results['metrics'])
-    _save_faithfulness_results(config, faithfulness_results, class_labels, results)
+    _save_faithfulness_results(config, results)
     return results
 
 
@@ -386,7 +386,7 @@ def _print_faithfulness_summary(metrics):
         print(f"  Avg trial std: {overall['avg_trial_std']:.4f}")
 
 
-def _save_faithfulness_results(config, faithfulness_results, class_labels, results):
+def _save_faithfulness_results(config, results):
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
 
     json_path = config.file.output_dir / f"faithfulness_stats{config.file.output_suffix}_{timestamp}.json"
@@ -394,8 +394,3 @@ def _save_faithfulness_results(config, faithfulness_results, class_labels, resul
         json.dump(results, f, indent=2)
     print(f"\nFaithfulness statistics saved to {json_path}")
 
-    for name, est_results in faithfulness_results.items():
-        scores_path = config.file.output_dir / f"faithfulness_scores_{name}{config.file.output_suffix}"
-        np.savez(scores_path, mean_scores=est_results["mean_scores"],
-                 std_scores=est_results.get("std_scores", []), class_labels=class_labels)
-        print(f"Raw scores for {name} saved to {scores_path}.npz")

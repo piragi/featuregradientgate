@@ -4,8 +4,6 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from gradcamfaith.core.config import PipelineConfig
-
 
 @dataclass
 class ClassificationPrediction:
@@ -82,55 +80,3 @@ class ClassificationResult:
             data['attribution_paths'] = None
 
         return cls(**data)
-
-
-@dataclass
-class PerturbationPatchInfo:
-    patch_id: int
-    x: int
-    y: int
-
-
-@dataclass
-class PerturbedImageRecord:
-    original_image_path: Path
-    perturbed_image_path: Path
-    mask_path: Path
-    patch_info: PerturbationPatchInfo
-    perturbation_method: str
-    perturbation_strength: Optional[float] = None
-
-
-@dataclass
-class LoadedAttributionData:
-    positive_attribution: Optional[np.ndarray] = None
-
-    @classmethod
-    def from_positive_attribution_path(cls, path: Optional[Path]) -> 'LoadedAttributionData':
-        if path is None or not path.exists():
-            return cls()
-        return cls(positive_attribution=np.load(path))
-
-
-@dataclass
-class AnalysisContext:
-    """Holds all data for an analysis session, focused on SaCo for now."""
-    config: PipelineConfig
-    original_results: List[ClassificationResult]
-
-    all_perturbed_records: List[PerturbedImageRecord]
-    perturbed_classification_results_map: Dict[Path, ClassificationResult]
-
-    @classmethod
-    def build(
-        cls, config: PipelineConfig, original_results: List[ClassificationResult],
-        all_perturbed_records: List[PerturbedImageRecord], perturbed_classification_results: List[ClassificationResult]
-    ) -> 'AnalysisContext':
-
-        perturbed_results_map = {p_res.image_path: p_res for p_res in perturbed_classification_results}
-        return cls(
-            config=config,
-            original_results=original_results,
-            all_perturbed_records=all_perturbed_records,
-            perturbed_classification_results_map=perturbed_results_map
-        )
