@@ -114,9 +114,13 @@ def run_unified_pipeline(
     # Classify and explain each image
     results = []
     debug_mode = config.classify.boosting.debug_mode
+    debug_flush_interval = max(1, int(config.classify.boosting.debug_flush_interval))
     debug_data_per_layer = {}
 
-    for _, (image_path, true_label_idx) in enumerate(tqdm(image_data, desc="Classifying & Explaining")):
+    debug_chunk_idx = 0
+    debug_chunked_output = False
+
+    for image_idx, (image_path, true_label_idx) in enumerate(tqdm(image_data, desc="Classifying & Explaining"), start=1):
         try:
             true_label = dataset_config.idx_to_class.get(true_label_idx)
             result, debug_info = classify_explain_single_image(
@@ -132,12 +136,48 @@ def run_unified_pipeline(
             results.append(result)
             if debug_mode and debug_info:
                 _accumulate_debug_info(debug_data_per_layer, debug_info)
+                if image_idx % debug_flush_interval == 0:
+                    _flush_debug_chunk(config, debug_data_per_layer, debug_chunk_idx)
+                    debug_data_per_layer.clear()
+                    debug_chunk_idx += 1
+                    debug_chunked_output = True
         except Exception as e:
             print(f"Error processing {image_path.name}: {e}")
             continue
 
+    if debug_mode and debug_chunked_output and debug_data_per_layer:
+        _flush_debug_chunk(config, debug_data_per_layer, debug_chunk_idx)
+        debug_data_per_layer.clear()
+        debug_chunk_idx += 1
+
     # Save debug outputs (classification CSV + gate/attribution .npz)
-    _save_debug_outputs(config, results, debug_data_per_layer)
+    _save_debug_outputs(
+        config=config,
+        results=results,
+        debug_data_per_layer=debug_data_per_layer,
+        debug_chunked=debug_chunked_output,
+        debug_chunk_count=debug_chunk_idx,
+    )
+
+    analysis_results = results
+    analysis_subset_size = config.faithfulness.analysis_subset_size
+    if (
+        config.classify.analysis
+        and analysis_subset_size is not None
+        and len(results) > analysis_subset_size
+    ):
+        effective_seed = (
+            config.faithfulness.analysis_sample_seed
+            if config.faithfulness.analysis_sample_seed is not None
+            else (random_seed if random_seed is not None else config.classify.boosting.random_seed)
+        )
+        rng = np.random.default_rng(effective_seed)
+        selected_idx = np.sort(rng.choice(len(results), size=analysis_subset_size, replace=False))
+        analysis_results = [results[i] for i in selected_idx]
+        print(
+            f"Analysis capped to {len(analysis_results)} samples "
+            f"(from {len(results)}) using seed={effective_seed}"
+        )
 
     # For CLIP models, wrap the classifier for both faithfulness and attribution analysis
     model_for_analysis = model
@@ -152,14 +192,18 @@ def run_unified_pipeline(
         print("Running faithfulness evaluation...")
         try:
             faithfulness_data = compute_faithfulness(
-                config, model_for_analysis, device, results
+                config, model_for_analysis, device, analysis_results
             )
         except Exception as e:
             print(f"Error in faithfulness evaluation: {e}")
 
     # Run SaCo attribution analysis
-    print("Running SaCo attribution analysis...")
-    saco_analysis = run_binned_attribution_analysis(config, model_for_analysis, results, device)
+    saco_analysis = {}
+    if config.classify.analysis:
+        print("Running SaCo attribution analysis...")
+        saco_analysis = run_binned_attribution_analysis(config, model_for_analysis, analysis_results, device)
+    else:
+        print("Skipping faithfulness and SaCo analysis (config.classify.analysis=False)")
 
     # Build unified metrics and save
     unified_metrics = _build_unified_metrics(faithfulness_data, saco_analysis)
@@ -271,7 +315,25 @@ def _accumulate_debug_info(debug_data_per_layer, debug_info):
             feature_gating.get('sparse_features_contributions', []))
 
 
-def _save_debug_outputs(config, results, debug_data_per_layer):
+def _flush_debug_chunk(config, debug_data_per_layer, chunk_idx):
+    """Flush one debug chunk to disk and keep RAM bounded."""
+    if not debug_data_per_layer:
+        return
+
+    debug_dir = config.file.output_dir / "debug"
+    debug_dir.mkdir(exist_ok=True, parents=True)
+
+    for layer_idx, layer_data in debug_data_per_layer.items():
+        np.savez_compressed(
+            debug_dir / f"layer_{layer_idx}_debug_chunk_{chunk_idx:05d}.npz",
+            patch_attribution_deltas=np.array(layer_data['patch_attribution_deltas']),
+            sparse_indices=np.array(layer_data['sparse_indices'], dtype=object),
+            sparse_activations=np.array(layer_data['sparse_activations'], dtype=object),
+            sparse_contributions=np.array(layer_data['sparse_contributions'], dtype=object),
+        )
+
+
+def _save_debug_outputs(config, results, debug_data_per_layer, debug_chunked=False, debug_chunk_count=0):
     """Save all debug outputs to output_dir/debug/. Gated by debug_mode."""
     if not config.classify.boosting.debug_mode:
         return
@@ -284,6 +346,10 @@ def _save_debug_outputs(config, results, debug_data_per_layer):
     if results:
         csv_path = debug_dir / "classification_results.csv"
         io_utils.save_classification_results_to_csv(results, csv_path)
+
+    if debug_chunked:
+        print(f"Saved chunked debug files ({debug_chunk_count} chunks) to {debug_dir}")
+        return
 
     for layer_idx, layer_data in debug_data_per_layer.items():
         np.savez_compressed(

@@ -97,6 +97,7 @@ class BoostingConfig:
     # Debug mode — collect gate/feature data per image and write extra outputs to output_dir/debug/
     debug_mode: bool = False
     active_feature_threshold: float = 0.1  # Threshold for considering a feature "active" in debug collection
+    debug_flush_interval: int = 10000  # Flush debug buffers every N images to bound host RAM
 
 
 @dataclass
@@ -161,6 +162,10 @@ class FaithfulnessConfig:
 
     # === GPU batching ===
     gpu_batch_size: int = 256  # Batch size for GPU forward passes
+
+    # === Large-run safeguards ===
+    analysis_subset_size: Optional[int] = 10000  # Cap faithfulness/SaCo analysis set size
+    analysis_sample_seed: Optional[int] = None  # None => fall back to pipeline random_seed
 
 
 @dataclass

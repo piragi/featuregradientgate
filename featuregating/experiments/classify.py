@@ -62,10 +62,10 @@ def classify_explain_single_image(
         config.file.cache_dir, image_path, f"_classification_explained_{dataset_config.name}"
     )
 
-    # Try to load from cache
-    loaded_result = io_utils.try_load_from_cache(cache_path)
-    if config.file.use_cached_original and loaded_result:
-        if loaded_result.attribution_paths is not None:
+    # Try to load from cache only when cache is enabled.
+    if config.file.use_cached_original:
+        loaded_result = io_utils.try_load_from_cache(cache_path)
+        if loaded_result and loaded_result.attribution_paths is not None:
             return loaded_result, {}  # No debug info from cache
 
     # Load and preprocess image
@@ -92,11 +92,14 @@ def classify_explain_single_image(
 
     # Create prediction
     prediction_data = raw_attribution_result_dict["predictions"]
+    predicted_class_idx = prediction_data["predicted_class_idx"]
+    confidence = float(prediction_data["probabilities"][predicted_class_idx])
+
     current_prediction = ClassificationPrediction(
-        predicted_class_label=dataset_config.idx_to_class[prediction_data["predicted_class_idx"]],
-        predicted_class_idx=prediction_data["predicted_class_idx"],
-        confidence=float(prediction_data["probabilities"][prediction_data["predicted_class_idx"]]),
-        probabilities=prediction_data["probabilities"]
+        predicted_class_label=dataset_config.idx_to_class[predicted_class_idx],
+        predicted_class_idx=predicted_class_idx,
+        confidence=confidence,
+        probabilities=[],
     )
 
     # Create attribution bundle
@@ -114,11 +117,13 @@ def classify_explain_single_image(
         prediction=current_prediction,
         true_label=true_label,
         attribution_paths=saved_attribution_paths,
-        _cached_tensor=input_tensor.cpu().numpy()[0],  # Cache preprocessed tensor (C, H, W)
-        _cached_raw_attribution=raw_attr  # Cache raw attribution
+        # Keep host RAM flat on large runs; downstream code falls back to disk reload.
+        _cached_tensor=None,
+        _cached_raw_attribution=None,
     )
 
-    # Cache the result
-    io_utils.save_to_cache(cache_path, final_result)
+    # Cache the result only when cache is enabled.
+    if config.file.use_cached_original:
+        io_utils.save_to_cache(cache_path, final_result)
 
     return final_result, debug_info

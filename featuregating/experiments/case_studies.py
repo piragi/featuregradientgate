@@ -82,10 +82,11 @@ def _validate_case_study_inputs(vanilla_path: Path, gated_path: Path, layers: Li
         )
 
     for layer_idx in layers:
-        expected = debug_dir / f"layer_{layer_idx}_debug.npz"
-        if not expected.exists():
+        single_file = debug_dir / f"layer_{layer_idx}_debug.npz"
+        chunk_files = list(debug_dir.glob(f"layer_{layer_idx}_debug_chunk_*.npz"))
+        if not single_file.exists() and not chunk_files:
             raise FileNotFoundError(
-                f"Missing debug NPZ for requested layer: {expected}\n"
+                f"Missing debug NPZ for requested layer: {single_file}\n"
                 "Re-run the sweep with matching layers or update the case-study layer list."
             )
 
@@ -247,24 +248,63 @@ def load_debug_data(path: Path, layers: Optional[List[int]] = None) -> Dict[int,
         raise FileNotFoundError(f"Debug data directory not found: {debug_dir}")
 
     debug_files = list(debug_dir.glob("layer_*_debug.npz"))
-    if not debug_files:
+    chunk_files = list(debug_dir.glob("layer_*_debug_chunk_*.npz"))
+    if not debug_files and not chunk_files:
         raise FileNotFoundError(f"No debug NPZ files found in {debug_dir}")
 
-    debug_data = {}
-    for debug_file in sorted(debug_files):
-        layer_idx = int(debug_file.stem.split('_')[1])
+    single_by_layer: Dict[int, Path] = {}
+    chunked_by_layer: Dict[int, List[Tuple[int, Path]]] = defaultdict(list)
 
+    for debug_file in sorted(debug_files):
+        match = re.match(r"layer_(\d+)_debug$", debug_file.stem)
+        if match:
+            single_by_layer[int(match.group(1))] = debug_file
+
+    for chunk_file in sorted(chunk_files):
+        match = re.match(r"layer_(\d+)_debug_chunk_(\d+)$", chunk_file.stem)
+        if match:
+            layer_idx = int(match.group(1))
+            chunk_idx = int(match.group(2))
+            chunked_by_layer[layer_idx].append((chunk_idx, chunk_file))
+
+    all_layers = sorted(set(single_by_layer) | set(chunked_by_layer))
+
+    debug_data = {}
+    for layer_idx in all_layers:
         if layers is not None and layer_idx not in layers:
             continue
 
-        data = np.load(debug_file, allow_pickle=True)
+        if layer_idx in single_by_layer:
+            data = np.load(single_by_layer[layer_idx], allow_pickle=True)
+            debug_data[layer_idx] = {
+                'sparse_indices': data['sparse_indices'],
+                'sparse_activations': data['sparse_activations'],
+                'sparse_contributions': data['sparse_contributions'],
+                'patch_attribution_deltas': data['patch_attribution_deltas'],
+            }
+        else:
+            sparse_indices = []
+            sparse_activations = []
+            sparse_contributions = []
+            patch_deltas = []
 
-        debug_data[layer_idx] = {
-            'sparse_indices': data['sparse_indices'],
-            'sparse_activations': data['sparse_activations'],
-            'sparse_contributions': data['sparse_contributions'],
-            'patch_attribution_deltas': data['patch_attribution_deltas'],
-        }
+            for _, chunk_path in sorted(chunked_by_layer[layer_idx], key=lambda t: t[0]):
+                data = np.load(chunk_path, allow_pickle=True)
+                sparse_indices.extend(data['sparse_indices'].tolist())
+                sparse_activations.extend(data['sparse_activations'].tolist())
+                sparse_contributions.extend(data['sparse_contributions'].tolist())
+                patch_chunk = data['patch_attribution_deltas']
+                if patch_chunk.size > 0:
+                    patch_deltas.append(patch_chunk)
+
+            debug_data[layer_idx] = {
+                'sparse_indices': np.array(sparse_indices, dtype=object),
+                'sparse_activations': np.array(sparse_activations, dtype=object),
+                'sparse_contributions': np.array(sparse_contributions, dtype=object),
+                'patch_attribution_deltas': (
+                    np.concatenate(patch_deltas, axis=0) if patch_deltas else np.array([])
+                ),
+            }
 
         print(f"  Layer {layer_idx}: {len(debug_data[layer_idx]['sparse_indices'])} images")
 
