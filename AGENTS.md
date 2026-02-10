@@ -169,7 +169,7 @@ This tracker is a required, evolving log for project state and near-term executi
 
 - Program branch: `feature/team-research-restructure-plan`
 - Branching mode: `slice branches + immediate integration + accepted checkpoint tags`
-- Last successful commit reflected here: `WP-20 integrated, accepted/wp-20 tagged`
+- Last successful commit reflected here: `WP-22 committed on integration branch (pending accepted tag)`
 - Last accepted integration checkpoint: `accepted/wp-20`
 - WP-06B status: `done and accepted`
 - WP-06C status: `done and accepted`
@@ -188,13 +188,13 @@ This tracker is a required, evolving log for project state and near-term executi
 - WP-18 status: `done and accepted`
 - WP-19 status: `done and accepted — path normalization + cleanup complete: prepared dataset paths moved to data/prepared, run outputs moved to data/runs, model checkpoints moved to data/models, examples removed.`
 - WP-20 status: `done — dead-surface cleanup completed (unused imports/locals/args).`
-- WP-21 status: `planned — outsider onboarding + analysis approachability pass (deferred by WP-22 naming/layout refactor).`
-- WP-22 status: `in progress — namespace/layout rename implemented locally (pending review/acceptance).`
-- What happened most recently: `WP-22 applied pure structural rename: src/gradcamfaith → featuregating, package module data → datasets, import paths gradcamfaith.* → featuregating.*, and pyproject package target/name updated. Validation: uv run pytest passed (13 passed, 3 skipped), focused lint gate uvx ruff check featuregating tests --select F401,F841,ARG001,ARG002 passed, and import smoke check for featuregating.experiments.sweep/pipeline + featuregating.datasets.setup passed.`
-- Reviewer decision: `pending (WP-22)`
-- What should happen next: `review WP-22 rename-only refactor, then accept/tag/integrate and resume WP-21 onboarding/docs improvements.`
-- Immediate next task (concrete): `review the rename-only diff for namespace/layout consistency and runbook command updates.`
-- Immediate validation for that task: `verify tests/import smokes remain green after review; then commit and tag accepted/wp-22.`
+- WP-21 status: `in progress — Part 1 implemented (README runbook + clearer analysis entrypoints).`
+- WP-22 status: `done — namespace/layout rename committed; pending accepted tag/checkpoint update.`
+- What happened most recently: `WP-21 Part 1 implemented: README rewritten as setup → sweep → comparison → case_studies runbook; comparison.py and case_studies.py now provide clearer script entry behavior with startup expectations, auto-discovery defaults, and actionable fail-fast errors for missing artifacts. Validation: uv run pytest passed (13 passed, 3 skipped), uvx ruff check featuregating tests --select F401,F841,ARG001,ARG002 clean, analysis import smoke passed.`
+- Reviewer decision: `pending (WP-21 Part 1)`
+- What should happen next: `review and accept WP-21 Part 1; then tag accepted/wp-22 and proceed with WP-21 Part 2 (additional analysis ergonomics if needed).`
+- Immediate next task (concrete): `review README runbook and analysis-script startup flow/messages for outsider readability.`
+- Immediate validation for that task: `run module entrypoints and confirm they fail fast with actionable guidance when artifacts are missing.`
 - Known blockers/risks now: `older experiment artifacts still use pre-WP18 schema and old root output paths; comparison.py no longer supports old results.json format without rerun.`
 - Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ in a future WP.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
@@ -1698,6 +1698,7 @@ Expected outcome:
 - **WP-21 planning decision**: Next slice is documentation and usability only: rewrite README as an end-to-end runbook and improve analysis entrypoint messaging/validation for `comparison.py` and `case_studies.py` without changing metrics or canonical paths.
 - **WP-22 planning decision**: Prioritize naming/layout refactor before WP-21 docs pass: remove `src/` nesting, rename package namespace to `featuregating`, and rename package module `data`→`datasets` to reduce ambiguity with runtime artifact folder `data/`.
 - **WP-22 (namespace/layout rename, pending acceptance)**: Implemented rename-only refactor with no algorithmic changes: moved package root from `src/gradcamfaith` to `featuregating/`, renamed module namespace `featuregating.data` to `featuregating.datasets`, updated imports in code/tests, updated README module invocations, and updated packaging metadata (`[project].name = featuregating`, wheel packages target `featuregating`). Validation: `uv run pytest` (`13 passed, 3 skipped`), `uvx ruff check featuregating tests --select F401,F841,ARG001,ARG002` clean, import smoke command passed.
+- **WP-21 Part 1 (outsider onboarding + entrypoint clarity, pending acceptance)**: Rewrote `README.md` into a sequential runbook (setup, sweep, comparison, case studies, artifact map, troubleshooting). Added clearer analysis script behavior in `experiments/comparison.py` and `experiments/case_studies.py`: startup expectation summaries, default sweep/experiment auto-discovery for easier first run, and explicit preflight validation errors when required artifacts are missing.
 
 ## Tooling and Commands
 Preferred command style:
@@ -2016,9 +2017,9 @@ All workpackages below are designed for coder ownership and maintainer review.
    - verify no algorithm or output-path behavior changes
    - tag/integrate as `accepted/wp-22` once approved
 2. Execute WP-21 outsider onboarding slice:
-   - rewrite `README.md` as setup → sweep → comparison → case_studies runbook
-   - harden `comparison.py` and `case_studies.py` entry flows for non-expert usage
-   - add concise artifact map and troubleshooting section
+   - review/accept Part 1 (README runbook + analysis entrypoint clarity)
+   - decide whether WP-21 Part 2 should add further ergonomics beyond current fail-fast messages
+   - tag WP-21 checkpoint after acceptance
 3. Define and document raw-data cleanup policy after preparation (opt-in and reproducible).
 4. Keep archiving decisions deferred for now (`docs/`, `scripts/`, `tests/`, and AGENTS history).
 5. Continue deferred refactors after WP-21:

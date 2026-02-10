@@ -2,6 +2,9 @@
 """
 Comprehensive comparison of best performer configurations vs vanilla baselines.
 Analyzes SaCo, Faithfulness Correlation, and PixelFlipping metrics with statistical analysis.
+
+Script usage:
+    uv run python -m featuregating.experiments.comparison
 """
 
 import json
@@ -14,6 +17,56 @@ import pandas as pd
 import scipy.stats as stats
 
 warnings.filterwarnings('ignore')
+
+
+def _discover_default_sweep_dirs(base_dir: Path = Path("data/runs")) -> List[str]:
+    """Discover recent sweep directories under ``data/runs``."""
+    if not base_dir.exists():
+        return []
+
+    candidates = sorted(
+        [p for p in base_dir.glob("feature_gradient_sweep_*") if p.is_dir()],
+        key=lambda p: p.name,
+        reverse=True,
+    )
+    return [str(p) for p in candidates[:3]]
+
+
+def _validate_sweep_dirs(sweep_dirs: List[str]) -> List[Path]:
+    """Validate sweep directory inputs and provide actionable errors."""
+    if not sweep_dirs:
+        raise ValueError(
+            "No sweep directories provided.\n"
+            "Provide at least one directory under data/runs/feature_gradient_sweep_<timestamp>/."
+        )
+
+    resolved: List[Path] = []
+    missing: List[str] = []
+    not_dirs: List[str] = []
+
+    for raw in sweep_dirs:
+        p = Path(raw)
+        if not p.exists():
+            missing.append(str(p))
+            continue
+        if not p.is_dir():
+            not_dirs.append(str(p))
+            continue
+        resolved.append(p)
+
+    if missing:
+        raise FileNotFoundError(
+            "Some sweep directories do not exist:\n"
+            + "\n".join(f"  - {m}" for m in missing)
+            + "\nRun a sweep first via `uv run python -m featuregating.experiments.sweep`."
+        )
+    if not_dirs:
+        raise NotADirectoryError(
+            "Some sweep paths are not directories:\n"
+            + "\n".join(f"  - {m}" for m in not_dirs)
+        )
+
+    return resolved
 
 
 def load_experiment_data(experiment_path: Path) -> Dict[str, Any]:
@@ -71,12 +124,13 @@ def get_experiment_info(data: Dict[str, Any]) -> Dict[str, Any]:
 def load_all_experiments(sweep_dirs: List[str]) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Load all experiments from sweep folders and separate vanilla from treatment experiments."""
 
+    sweep_paths = _validate_sweep_dirs(sweep_dirs)
+
     sweep_data = []
     vanilla_data = []
 
     # Load all experiments from all sweep directories
-    for sweep_dir_str in sweep_dirs:
-        sweep_dir = Path(sweep_dir_str)
+    for sweep_dir in sweep_paths:
         print(f"Loading experiments from {sweep_dir}...")
 
         # Load all experiments from sweep directory structure
@@ -493,7 +547,17 @@ def save_results(comparison_df: pd.DataFrame, summary_df: pd.DataFrame, output_d
 
 
 def main(sweep_dirs: List[str]):
-    """Main analysis function."""
+    """Main analysis function for comparison outputs."""
+    print("=" * 80)
+    print("COMPARISON ANALYSIS")
+    print("=" * 80)
+    print("Expected structure per experiment:")
+    print("  <sweep>/<dataset>/<experiment>/results.json")
+    print("  <sweep>/<dataset>/<experiment>/experiment_config.json")
+    print("Will write:")
+    print("  ./detailed_sweep_comparison.csv")
+    print("  ./sweep_summary_table.csv")
+    print()
 
     print("Loading experiment data...")
     sweep_df, vanilla_df = load_all_experiments(sweep_dirs)
@@ -501,8 +565,24 @@ def main(sweep_dirs: List[str]):
     print(f"Loaded {len(sweep_df)} treatment experiments")
     print(f"Loaded {len(vanilla_df)} vanilla baseline experiments")
 
+    if sweep_df.empty and vanilla_df.empty:
+        raise ValueError(
+            "No experiments were loaded from the provided sweep directories.\n"
+            "Check that each sweep folder contains per-dataset experiment subdirectories."
+        )
+    if vanilla_df.empty:
+        raise ValueError(
+            "No vanilla baseline experiments were found.\n"
+            "Expected at least one '<sweep>/<dataset>/vanilla/' directory."
+        )
+
     print("\nCalculating statistical comparisons...")
     comparison_df = calculate_statistical_comparison(sweep_df, vanilla_df)
+    if comparison_df.empty:
+        raise ValueError(
+            "No comparable rows were produced.\n"
+            "Check that treatment experiments and vanilla baselines exist for matching datasets."
+        )
 
     print("\nIdentifying best performers...")
     identify_best_performers(comparison_df)
@@ -523,10 +603,14 @@ def main(sweep_dirs: List[str]):
 
 
 if __name__ == "__main__":
-    # Specific sweep directories to analyze
-    sweep_dirs = [
-        "data/runs/feature_gradient_sweep_20260209_225220/"
-    ]
+    # Config-first runner: edit this list if you want explicit sweep folders.
+    sweep_dirs = _discover_default_sweep_dirs()
+    if not sweep_dirs:
+        raise FileNotFoundError(
+            "No default sweep directories found under data/runs/.\n"
+            "Run `uv run python -m featuregating.experiments.sweep` first, or edit "
+            "`sweep_dirs` in featuregating/experiments/comparison.py."
+        )
 
-    print(f"Analyzing sweep directories: {sweep_dirs}")
+    print(f"Analyzing sweep directories: {sweep_dirs}\n")
     main(sweep_dirs)

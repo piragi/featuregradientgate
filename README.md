@@ -1,8 +1,8 @@
-# Feature Gradient Gating for Vision Transformers
+# Feature Gradient Gating
 
-Research investigating whether SAE (Sparse Autoencoder) feature gradients can improve attribution maps by extending the TransMM principle from attention space into interpretable feature space.
+Research code for attribution faithfulness experiments with sparse autoencoder (SAE) feature-gradient gating.
 
-**Project Page**: [https://piragi.github.io/thesis](https://piragi.github.io/thesis)
+Project page: https://piragi.github.io/thesis
 
 ## Overview
 
@@ -13,43 +13,82 @@ Traditional attribution methods like TransMM combine attention maps with gradien
 
 The key research question: Can we leverage the interpretability of SAE features to create more faithful and semantically meaningful attribution maps?
 
-## Setup
+## Environment Setup
 
-### Prerequisites
+Install/sync dependencies:
 
-Using `uv` is recommended: https://docs.astral.sh/uv/
+```bash
+uv sync
+```
 
-A Hugging Face token is required to download the ImageNet dataset. Login with:
+For ImageNet downloads, authenticate Hugging Face:
 
 ```bash
 uvx hf auth login
 ```
 
-### Installation
+## Workflow Runbook
 
-Run the setup script:
+Use this sequence for end-to-end usage.
+
+### 1. Download and Prepare Data/Models
 
 ```bash
 uv run python -m featuregating.datasets.setup
 ```
 
-This will download all datasets, models, and SAE checkpoints.
+Runtime paths:
+- prepared datasets: `data/prepared/<dataset>/`
+- model checkpoints: `data/models/<dataset>/`
+- run outputs: `data/runs/<run_name>/`
 
-## Usage
-
-### Running Experiments
-
-Run the main experiment sweep:
+### 2. Run a Sweep
 
 ```bash
 uv run python -m featuregating.experiments.sweep
 ```
 
-Sweep outputs are written under `./data/runs/`.
+Expected artifacts:
+- new sweep folder in `data/runs/feature_gradient_sweep_<timestamp>/`
+- per-experiment outputs including `results.json`, `experiment_config.json`, `faithfulness_stats_*.json`
 
-### Datasets
+### 3. Run Cross-Config Comparison
 
-The project supports three medical/natural image datasets:
-- **ImageNet**: Natural images (1000 classes)
-- **HyperKvasir**: Gastrointestinal tract images
-- **CovidQUEx**: Lung X-ray images
+```bash
+uv run python -m featuregating.experiments.comparison
+```
+
+What it does:
+- loads one or more sweep folders
+- compares treatment configs against per-dataset vanilla baselines
+- writes:
+  - `detailed_sweep_comparison.csv`
+  - `sweep_summary_table.csv`
+
+By default it tries to auto-discover recent sweep folders in `data/runs/`. If that fails, edit the config block in `featuregating/experiments/comparison.py`.
+
+### 4. Run Case Studies (Qualitative Analysis)
+
+```bash
+uv run python -m featuregating.experiments.case_studies
+```
+
+What it does:
+- loads faithfulness + debug artifacts from a selected sweep config
+- extracts dominant boosting/suppressing SAE features
+- saves per-layer case outputs under:
+  - `.../case_studies/<experiment_config>/layer_<layer_idx>/`
+  - `.../case_studies_degraded/<experiment_config>/layer_<layer_idx>/`
+
+By default it auto-discovers a recent run for `imagenet`; edit the config block in `featuregating/experiments/case_studies.py` for a specific dataset/run/config.
+
+## Output Artifact Map
+
+- `results.json`:
+  - per-experiment summary metrics (`SaCo`, `FaithfulnessCorrelation`, `PixelFlipping`)
+- `faithfulness_stats_*.json`:
+  - detailed per-image metric arrays + image-level metadata
+- `debug/layer_*_debug.npz`:
+  - sparse feature debug arrays used by case study analysis
+- comparison outputs:
+  - `detailed_sweep_comparison.csv`, `sweep_summary_table.csv`
