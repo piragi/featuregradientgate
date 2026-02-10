@@ -90,6 +90,20 @@ def _validate_case_study_inputs(vanilla_path: Path, gated_path: Path, layers: Li
             )
 
 
+def _resolve_validation_activations_path(dataset: str, layers: List[int]) -> Path:
+    """Return validation activation path, extracting once if needed."""
+    from featuregating.models.sae_extraction import extract_sae_activations_if_needed
+
+    return extract_sae_activations_if_needed(
+        dataset_name=dataset,
+        layers=layers,
+        split='val',
+        output_dir=Path(f"./data/sae_activations/{dataset}_val"),
+        subset_size=None,
+        use_clip=True,
+    )
+
+
 def _patch_grid(n_patches: int) -> Tuple[int, int]:
     """Derive (patches_per_side, patch_size) from total patch count."""
     patches_per_side = int(np.sqrt(n_patches))
@@ -937,14 +951,15 @@ def main() -> None:
     experiment_path, experiment_config = _discover_default_experiment(dataset)
     layers = _infer_layers_from_experiment_name(experiment_config)
 
-    # Keep defaults lightweight for first-time usage.
-    validation_activations_path = None
+    # Use validation set prototypes by default.
+    validation_activations_path = _resolve_validation_activations_path(dataset, layers)
 
     print("Auto-selected experiment target:")
     print(f"  dataset:          {dataset}")
     print(f"  experiment_path:  {experiment_path}")
     print(f"  experiment_config:{experiment_config}")
     print(f"  layers:           {layers}")
+    print(f"  prototype source: validation ({validation_activations_path})")
     print()
 
     run_case_study_analysis(
