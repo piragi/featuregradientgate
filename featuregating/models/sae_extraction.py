@@ -64,11 +64,11 @@ def _extract_sae_activations(
     Loads the model and SAEs, processes each image, encodes residuals into
     sparse feature activations, and saves to NPZ with periodic checkpointing.
     """
-    import gradcamfaith.core.config as config
-    from gradcamfaith.data.dataset_config import get_dataset_config
-    from gradcamfaith.models.load import load_model_for_dataset
-    from gradcamfaith.models.sae_resources import load_steering_resources
-    from gradcamfaith.data.dataloader import create_dataloader, get_single_image_loader
+    import featuregating.core.config as config
+    from featuregating.datasets.dataset_config import get_dataset_config
+    from featuregating.models.load import load_model_for_dataset
+    from featuregating.models.sae_resources import load_steering_resources
+    from featuregating.datasets.dataloader import create_dataloader, get_single_image_loader
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")

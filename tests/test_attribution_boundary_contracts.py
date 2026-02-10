@@ -5,14 +5,14 @@ import inspect
 
 def test_compute_attribution_exists():
     """compute_attribution is importable from the canonical package path."""
-    from gradcamfaith.core.attribution import compute_attribution
+    from featuregating.core.attribution import compute_attribution
 
     assert callable(compute_attribution)
 
 
 def test_compute_attribution_output_contract():
     """compute_attribution signature matches the spec and returns Dict[str, Any]."""
-    from gradcamfaith.core.attribution import compute_attribution
+    from featuregating.core.attribution import compute_attribution
 
     sig = inspect.signature(compute_attribution)
     param_names = list(sig.parameters.keys())
@@ -40,7 +40,7 @@ def test_pipeline_uses_compute_attribution():
     import importlib
     import ast
 
-    spec = importlib.util.find_spec("gradcamfaith.experiments.classify")
+    spec = importlib.util.find_spec("featuregating.experiments.classify")
     assert spec is not None and spec.origin is not None
 
     source = open(spec.origin).read()
@@ -65,7 +65,7 @@ def test_pipeline_uses_compute_attribution():
 
 def test_deprecated_shims_removed():
     """Legacy entrypoints have been removed from the attribution module (WP-07)."""
-    import gradcamfaith.core.attribution as attr_module
+    import featuregating.core.attribution as attr_module
 
     assert not hasattr(attr_module, "transmm_prisma_enhanced")
     assert not hasattr(attr_module, "generate_attribution_prisma_enhanced")

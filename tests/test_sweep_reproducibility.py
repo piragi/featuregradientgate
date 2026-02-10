@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-import gradcamfaith.experiments.sweep as sweep
+import featuregating.experiments.sweep as sweep
 
 
 class _DummyTorchObject:

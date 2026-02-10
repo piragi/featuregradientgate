@@ -4,7 +4,7 @@ from typing import List, Optional
 
 import pandas as pd
 
-from gradcamfaith.core.types import ClassificationResult
+from featuregating.core.types import ClassificationResult
 
 
 def ensure_directories(directories: List[Path]) -> None:

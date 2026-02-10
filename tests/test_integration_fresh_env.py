@@ -29,7 +29,7 @@ def _normalize_results(base_dir: Path):
 def test_full_setup_downloads_assets():
     _skip_unless_full_stack()
 
-    from gradcamfaith.data.setup import main as setup_main
+    from featuregating.datasets.setup import main as setup_main
 
     setup_main()
 
@@ -56,7 +56,7 @@ def test_sample_sweep_reproducible_with_fixed_seed(tmp_path):
     if not torch.cuda.is_available():
         pytest.skip("Sample sweep integration currently requires CUDA because SAE loading calls .cuda()")
 
-    from gradcamfaith.experiments.sweep import run_parameter_sweep
+    from featuregating.experiments.sweep import run_parameter_sweep
 
     source_path = Path("./data/hyperkvasir/labeled-images/")
     if not source_path.exists():
@@ -108,7 +108,7 @@ def test_imagenet_golden_faithfulness_values(tmp_path):
     if not torch.cuda.is_available():
         pytest.skip("Requires CUDA for SAE loading")
 
-    from gradcamfaith.experiments.sweep import run_parameter_sweep
+    from featuregating.experiments.sweep import run_parameter_sweep
 
     source_path = Path("./data/imagenet/raw")
     if not source_path.exists():

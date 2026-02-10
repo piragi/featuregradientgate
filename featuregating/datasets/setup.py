@@ -3,14 +3,14 @@ import shutil
 import sys
 from pathlib import Path
 
-from gradcamfaith.data.download import (
+from featuregating.datasets.download import (
     download_covidquex,
     download_hyperkvasir,
     download_imagenet,
     download_sae_checkpoints,
     download_thesis_saes,
 )
-from gradcamfaith.data.prepare import convert_dataset, print_summary  # noqa: F401
+from featuregating.datasets.prepare import convert_dataset, print_summary  # noqa: F401
 
 
 def prepare_dataset_if_needed(
@@ -80,7 +80,7 @@ def main():
         download_covidquex(data_dir, models_dir)
         download_imagenet(data_dir)
 
-        from gradcamfaith.data.dataset_config import refresh_imagenet_config
+        from featuregating.datasets.dataset_config import refresh_imagenet_config
         refresh_imagenet_config()
 
         download_thesis_saes(data_dir)

@@ -24,7 +24,7 @@ import torch
 from PIL import Image
 from tqdm import tqdm
 
-from gradcamfaith.experiments.faithfulness import (
+from featuregating.experiments.faithfulness import (
     apply_baseline_perturbation,
     create_patch_mask,
 )
@@ -122,7 +122,7 @@ def _load_tensor_and_attributions(result):
     if result._cached_tensor is not None:
         tensor = result._cached_tensor
     else:
-        from gradcamfaith.data.dataset_config import get_dataset_config
+        from featuregating.datasets.dataset_config import get_dataset_config
         ds_cfg = get_dataset_config("imagenet")  # fallback
         transform = ds_cfg.get_transforms('test')
         pil = Image.open(result.image_path).convert('RGB')

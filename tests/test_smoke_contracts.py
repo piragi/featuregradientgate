@@ -8,17 +8,17 @@ def _param_names(func):
 
 def test_package_api_imports():
     """All public APIs are importable from their canonical package paths."""
-    import gradcamfaith.data.setup  # noqa: F401
+    import featuregating.datasets.setup  # noqa: F401
 
-    from gradcamfaith.experiments.pipeline import run_unified_pipeline
-    from gradcamfaith.models.load import load_model_for_dataset
-    from gradcamfaith.models.sae_resources import load_steering_resources
-    from gradcamfaith.data.setup import convert_dataset
+    from featuregating.experiments.pipeline import run_unified_pipeline
+    from featuregating.models.load import load_model_for_dataset
+    from featuregating.models.sae_resources import load_steering_resources
+    from featuregating.datasets.setup import convert_dataset
 
-    from gradcamfaith.experiments.case_studies import run_case_study_analysis
-    from gradcamfaith.experiments.comparison import main as comparison_main
-    from gradcamfaith.experiments.sae_train import SWEEP_CONFIG, train_single_config
-    from gradcamfaith.experiments.sweep import run_parameter_sweep, run_single_experiment, SweepConfig
+    from featuregating.experiments.case_studies import run_case_study_analysis
+    from featuregating.experiments.comparison import main as comparison_main
+    from featuregating.experiments.sae_train import SWEEP_CONFIG, train_single_config
+    from featuregating.experiments.sweep import run_parameter_sweep, run_single_experiment, SweepConfig
 
     assert callable(run_single_experiment)
     assert callable(run_parameter_sweep)
@@ -34,14 +34,14 @@ def test_package_api_imports():
 
 
 def test_public_signature_contracts():
-    from gradcamfaith.experiments.case_studies import run_case_study_analysis
-    from gradcamfaith.experiments.comparison import main as comparison_main
-    from gradcamfaith.experiments.sae_train import train_single_config
-    from gradcamfaith.experiments.sweep import run_parameter_sweep, run_single_experiment
-    from gradcamfaith.experiments.pipeline import run_unified_pipeline
-    from gradcamfaith.models.load import load_model_for_dataset
-    from gradcamfaith.models.sae_resources import load_steering_resources
-    from gradcamfaith.data.setup import convert_dataset
+    from featuregating.experiments.case_studies import run_case_study_analysis
+    from featuregating.experiments.comparison import main as comparison_main
+    from featuregating.experiments.sae_train import train_single_config
+    from featuregating.experiments.sweep import run_parameter_sweep, run_single_experiment
+    from featuregating.experiments.pipeline import run_unified_pipeline
+    from featuregating.models.load import load_model_for_dataset
+    from featuregating.models.sae_resources import load_steering_resources
+    from featuregating.datasets.setup import convert_dataset
 
     assert _param_names(run_single_experiment) == [
         "dataset_name",
@@ -112,7 +112,7 @@ def test_public_signature_contracts():
     assert _param_names(load_steering_resources) == ["layers", "dataset_name"]
 
 def test_feature_gate_is_deterministic_for_fixed_inputs():
-    from gradcamfaith.core.gating import compute_feature_gradient_gate
+    from featuregating.core.gating import compute_feature_gradient_gate
 
     torch.manual_seed(0)
     residual_grad = torch.randn(12, 8)
@@ -144,7 +144,7 @@ def test_feature_gate_is_deterministic_for_fixed_inputs():
 
 
 def test_feature_gate_shuffle_is_seeded_and_bounded():
-    from gradcamfaith.core.gating import compute_feature_gradient_gate
+    from featuregating.core.gating import compute_feature_gradient_gate
 
     torch.manual_seed(7)
     residual_grad = torch.randn(20, 10)

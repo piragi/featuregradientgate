@@ -26,11 +26,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
-import gradcamfaith.core.config as config
-from gradcamfaith.data.dataset_config import get_dataset_config
-from gradcamfaith.experiments.pipeline import run_unified_pipeline
-from gradcamfaith.models.load import load_model_for_dataset
-from gradcamfaith.models.sae_resources import load_steering_resources
+import featuregating.core.config as config
+from featuregating.datasets.dataset_config import get_dataset_config
+from featuregating.experiments.pipeline import run_unified_pipeline
+from featuregating.models.load import load_model_for_dataset
+from featuregating.models.sae_resources import load_steering_resources
 
 
 # ---------------------------------------------------------------------------

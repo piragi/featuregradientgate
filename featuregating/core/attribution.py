@@ -24,9 +24,9 @@ import torch.nn.functional as F
 from vit_prisma.configs.HookedViTConfig import HookedViTConfig
 from vit_prisma.models.base_vit import HookedViT
 
-from gradcamfaith.core.config import PipelineConfig
-from gradcamfaith.core.gating import apply_feature_gradient_gating
-from gradcamfaith.models.inference import run_model_forward_backward, setup_hooks
+from featuregating.core.config import PipelineConfig
+from featuregating.core.gating import apply_feature_gradient_gating
+from featuregating.models.inference import run_model_forward_backward, setup_hooks
 
 
 # ---------------------------------------------------------------------------

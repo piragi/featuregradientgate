@@ -49,31 +49,31 @@ For concurrent paper release:
 - Next slice always branches from the new integration HEAD after the accepted checkpoint is in.
 - Promotion to `main` happens later as a separate integration decision after workpackage validation.
 
-## Current Repo Snapshot (post WP-18)
+## Current Repo Snapshot (post WP-20)
 - Zero root `.py` files remain. All code lives in the package.
-- Package code (`src/gradcamfaith/`) is the canonical source for all modules:
+- Package code (`featuregating/`) is the canonical source for all modules:
   - `core/` — attribution, gating, config, types
-  - `data/` — dataset_config, dataloader, download, prepare, setup, io_utils
+  - `datasets/` — dataset_config, dataloader, download, prepare, setup, io_utils
   - `models/` — load, sae_resources, clip_classifier
   - `experiments/` — pipeline, classify, sweep, sae_train, comparison, case_studies, faithfulness, saco
 - `models/__init__.py` uses clean eager re-exports of `load_model_for_dataset` and `load_steering_resources` (no `__getattr__` hack).
-- Dependency graph is unidirectional: `core → data → models → experiments` (no cycles).
+- Dependency graph is unidirectional: `core → datasets → models → experiments` (no cycles).
 - Runtime path conventions:
   - prepared datasets: `data/prepared/<dataset>/`
   - run outputs: `data/runs/<run_name>/`
   - model checkpoints: `data/models/<dataset>/`
 
 ## Target Structure
-Package layout under `src/gradcamfaith` with unidirectional dependency flow: `core → data → models → experiments`.
+Package layout under `featuregating` with unidirectional dependency flow: `core → datasets → models → experiments`.
 
 ```text
-src/gradcamfaith/
+featuregating/
   core/
     attribution.py      # TransLRP attribution + compute_attribution orchestrator
     gating.py           # feature-gradient gate computation
     types.py            # shared dataclasses (ClassificationResult, etc.)
     config.py           # PipelineConfig, FileConfig, BoostingConfig
-  data/
+  datasets/
     dataset_config.py   # DatasetConfig, transform factories, dataset registry
     dataloader.py       # UnifiedMedicalDataset, create_dataloader
     download.py         # download helpers
@@ -99,7 +99,7 @@ src/gradcamfaith/
 
 Notes:
 - Keep modules focused. Prefer small composable files over one large orchestrator.
-- No circular dependencies: experiments may import from models/data/core; models from data/core; data from core only.
+- No circular dependencies: experiments may import from models/datasets/core; models from datasets/core; datasets from core only.
 
 ## Migration Map (Current -> Target)
 Completed migrations (WP-01 through WP-07):
@@ -124,7 +124,7 @@ Remaining migrations (WP-08 through WP-10):
 ## Legacy Compatibility Policy
 - All root compatibility wrappers have been removed (WP-07). No root shim maintenance needed.
 - Remaining root files (`pipeline.py`, `dataset_config.py`, etc.) are canonical code, not shims — they will be migrated into the package and deleted (WP-08 through WP-10).
-- After WP-10: zero root `.py` files. All entrypoints via `gradcamfaith.*` package paths only.
+- After WP-10: zero root `.py` files. All entrypoints via package paths only.
 
 ## Workflow Policy (Mandatory)
 Use a feature branch for the rework.
@@ -188,11 +188,13 @@ This tracker is a required, evolving log for project state and near-term executi
 - WP-18 status: `done and accepted`
 - WP-19 status: `done and accepted — path normalization + cleanup complete: prepared dataset paths moved to data/prepared, run outputs moved to data/runs, model checkpoints moved to data/models, examples removed.`
 - WP-20 status: `done — dead-surface cleanup completed (unused imports/locals/args).`
-- What happened most recently: `WP-20 removed dead imports/locals and removed unused internal args where callsites could be safely updated in lockstep. Validation: uvx ruff check src tests --select F401,F841,ARG001,ARG002 is clean; uv run pytest passed (13 passed, 3 skipped).`
-- Reviewer decision: `accepted`
-- What should happen next: `final outsider-usability pass: rewrite README as setup → sweep → comparison → case_studies runbook and harden analysis entrypoints.`
-- Immediate next task (concrete): `implement README workflow rewrite and robust comparison/case_studies runner ergonomics.`
-- Immediate validation for that task: `run documented commands end-to-end on existing run folder and verify expected artifact paths/output messages.`
+- WP-21 status: `planned — outsider onboarding + analysis approachability pass (deferred by WP-22 naming/layout refactor).`
+- WP-22 status: `in progress — namespace/layout rename implemented locally (pending review/acceptance).`
+- What happened most recently: `WP-22 applied pure structural rename: src/gradcamfaith → featuregating, package module data → datasets, import paths gradcamfaith.* → featuregating.*, and pyproject package target/name updated. Validation: uv run pytest passed (13 passed, 3 skipped), focused lint gate uvx ruff check featuregating tests --select F401,F841,ARG001,ARG002 passed, and import smoke check for featuregating.experiments.sweep/pipeline + featuregating.datasets.setup passed.`
+- Reviewer decision: `pending (WP-22)`
+- What should happen next: `review WP-22 rename-only refactor, then accept/tag/integrate and resume WP-21 onboarding/docs improvements.`
+- Immediate next task (concrete): `review the rename-only diff for namespace/layout consistency and runbook command updates.`
+- Immediate validation for that task: `verify tests/import smokes remain green after review; then commit and tag accepted/wp-22.`
 - Known blockers/risks now: `older experiment artifacts still use pre-WP18 schema and old root output paths; comparison.py no longer supports old results.json format without rerun.`
 - Known follow-up (deferred from WP-06D): `sweep.py still contains resource lifecycle helpers (_load_dataset_resources, _release_dataset_resources, _gpu_cleanup, _build_imagenet_clip_prompts) that belong in models/. Extract to models/ in a future WP.`
 - Decision log pointer: `all accepted structural decisions must be appended in this section`
@@ -1562,6 +1564,81 @@ Expected outcome:
 
 ---
 
+### WP-21 Concrete Plan (Outsider Onboarding + Analysis Approachability)
+
+Goal: make the project easy for external researchers to run and interpret without maintainer context.
+
+Scope:
+1. Rewrite `README.md` as a sequential runbook:
+   - repo intent and current canonical paths (`data/prepared`, `data/models`, `data/runs`)
+   - environment setup with `uv`
+   - dataset setup/preparation flow
+   - sweep execution flow
+   - comparison workflow (what input run dirs are required, what files are produced)
+   - case studies workflow (what artifacts must already exist, where outputs are saved)
+   - quick troubleshooting section for common missing-artifact and schema-mismatch errors
+2. Improve analysis approachability in `experiments/comparison.py` and `experiments/case_studies.py`:
+   - fail fast with explicit, actionable errors when required files are missing
+   - print concise "what this script expects" and "what was written" summaries
+   - keep interfaces thin and config-first (no large CLI expansion)
+3. Add a short artifact map in docs:
+   - `results.json`
+   - `faithfulness_stats_*.json`
+   - analysis CSV outputs
+   - debug NPZ usage expectations
+
+Hard constraints:
+- No metric/algorithm behavior changes.
+- No path changes (canonical remains `data/runs`).
+- Preserve config-first policy; only minimal CLI overrides if needed.
+- Keep backwards-compat support assumptions explicit (older pre-WP18 run folders may fail validation by design).
+
+Validation:
+- `uv run pytest` remains green.
+- Manual doc-validation: execute README workflow commands on one dataset and confirm expected files appear in `data/runs/<run_name>/`.
+- Manual analysis-validation: run comparison and case-study flows and confirm output-location messages are clear.
+
+Expected outcome:
+- A newcomer can execute setup → sweep → comparison → case studies from README alone.
+- Analysis failures are self-diagnosing (clear missing-file/mismatch messages).
+- Maintainer support load for onboarding drops.
+
+---
+
+### WP-22 Concrete Plan (Namespace + Layout Rename Only)
+
+Goal: simplify repository comprehension by removing `src/` nesting and using clearer package/module names without changing runtime behavior.
+
+Scope:
+1. Remove src layout:
+   - move `src/gradcamfaith/` to root package path `featuregating/`
+2. Rename package namespace:
+   - `gradcamfaith.*` imports → `featuregating.*`
+3. Rename ambiguous package module:
+   - `featuregating.data.*` → `featuregating.datasets.*`
+4. Update packaging/docs/tests accordingly:
+   - `pyproject.toml` package target
+   - README module invocation paths
+   - tests and internal imports
+
+Hard constraints:
+- No algorithm, metric, or output behavior changes.
+- Runtime artifact paths remain unchanged (`data/prepared`, `data/runs`, `data/models`).
+- Refactor is naming/layout only.
+- Keep config-first interface policy intact.
+
+Validation:
+- `uvx ruff check featuregating tests --select F401,F841,ARG001,ARG002`
+- `uv run pytest`
+- smoke import check for `featuregating.experiments.sweep`, `featuregating.experiments.pipeline`, `featuregating.datasets.setup`
+
+Expected outcome:
+- Shallower, more legible repository layout at first glance.
+- Clear separation between package module (`featuregating.datasets`) and runtime artifact directory (`data/`).
+- No behavioral drift.
+
+---
+
 ### Decision Log
 - **WP-01**: Added `[build-system]` (hatchling) and `[tool.hatch.build.targets.wheel]` to pyproject.toml to make `src/gradcamfaith` an installable package. This is required for absolute imports (`from gradcamfaith.core.config import ...`) to work. `uv sync` installs the package in dev mode automatically.
 - **WP-01**: Internal imports within the package use absolute paths (`from gradcamfaith.core.config import ...`), not relative imports, for clarity.
@@ -1618,6 +1695,9 @@ Expected outcome:
 - **WP-19 (path normalization + cleanup)**: Implemented path migration in code/docs/tests (`*_unified` → `data/prepared/<dataset>`, run outputs to `data/runs`, checkpoints to `data/models`), removed example module and its smoke-contract test, and added opt-in raw source cleanup (`cleanup_source=True`) in `prepare_dataset_if_needed`. Local workspace directories were migrated to the new layout. Validation: `uv run pytest` passed (`13 passed, 3 skipped`).
 - **WP-20 planning decision**: Introduced dedicated dead-surface hygiene workpackage (unused imports/locals/args) with explicit `ruff` gate (`F401,F841,ARG001,ARG002`) before final outsider-usability/documentation pass.
 - **WP-20 (dead-surface hygiene)**: Cleared all current `ruff` unused findings in `src/` and `tests/` for `F401,F841,ARG001,ARG002`: removed dead imports/locals and removed unused internal parameters where callsites were updated in lockstep. Validation: `uvx ruff check src tests --select F401,F841,ARG001,ARG002` clean; `uv run pytest` passed (`13 passed, 3 skipped`).
+- **WP-21 planning decision**: Next slice is documentation and usability only: rewrite README as an end-to-end runbook and improve analysis entrypoint messaging/validation for `comparison.py` and `case_studies.py` without changing metrics or canonical paths.
+- **WP-22 planning decision**: Prioritize naming/layout refactor before WP-21 docs pass: remove `src/` nesting, rename package namespace to `featuregating`, and rename package module `data`→`datasets` to reduce ambiguity with runtime artifact folder `data/`.
+- **WP-22 (namespace/layout rename, pending acceptance)**: Implemented rename-only refactor with no algorithmic changes: moved package root from `src/gradcamfaith` to `featuregating/`, renamed module namespace `featuregating.data` to `featuregating.datasets`, updated imports in code/tests, updated README module invocations, and updated packaging metadata (`[project].name = featuregating`, wheel packages target `featuregating`). Validation: `uv run pytest` (`13 passed, 3 skipped`), `uvx ruff check featuregating tests --select F401,F841,ARG001,ARG002` clean, import smoke command passed.
 
 ## Tooling and Commands
 Preferred command style:
@@ -1931,12 +2011,17 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Reviewer decision recorded: `accepted`, `accepted with follow-ups`, or `rework requested`.
 
 ## Immediate Next Steps (Concrete)
-1. Final outsider-usability pass:
+1. Review and accept WP-22 naming/layout slice:
+   - confirm namespace/layout rename only (`featuregating`, `featuregating.datasets`)
+   - verify no algorithm or output-path behavior changes
+   - tag/integrate as `accepted/wp-22` once approved
+2. Execute WP-21 outsider onboarding slice:
    - rewrite `README.md` as setup → sweep → comparison → case_studies runbook
    - harden `comparison.py` and `case_studies.py` entry flows for non-expert usage
-2. Define and document raw-data cleanup policy after preparation (opt-in and reproducible).
-3. Keep archiving decisions deferred for now (`docs/`, `scripts/`, `tests/`, and AGENTS history).
-4. Continue deferred refactors:
+   - add concise artifact map and troubleshooting section
+3. Define and document raw-data cleanup policy after preparation (opt-in and reproducible).
+4. Keep archiving decisions deferred for now (`docs/`, `scripts/`, `tests/`, and AGENTS history).
+5. Continue deferred refactors after WP-21:
    - Sweep compression (resource lifecycle extraction to `models/`, deferred from WP-06D).
    - `case_studies.py` and `comparison.py` compression.
    - Debug accumulation cleanup in `experiments/pipeline.py` (~90 lines).
@@ -1953,5 +2038,5 @@ All workpackages below are designed for coder ownership and maintainer review.
 - Prepared dataset paths are canonicalized to `data/prepared/<dataset>/`.
 - Run output paths are canonicalized to `data/runs/<run_name>/` (replacing root `experiments/` output path).
 - Model checkpoints are canonicalized to `data/models/<dataset>/` (no symlink transition).
-- Examples are removed for now; no `src/gradcamfaith/examples/` maintenance.
+- Examples are removed for now; no `featuregating/examples/` maintenance.
 - Archiving strategy for `docs/`, `scripts/`, `tests/`, and AGENTS history is deferred.

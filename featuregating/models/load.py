@@ -10,8 +10,8 @@ from typing import Optional
 
 import torch
 
-from gradcamfaith.core.config import PipelineConfig
-from gradcamfaith.data.dataset_config import DatasetConfig
+from featuregating.core.config import PipelineConfig
+from featuregating.datasets.dataset_config import DatasetConfig
 
 
 def _validate_model_interface(model, model_type: str):
@@ -61,7 +61,7 @@ def load_model_for_dataset(
         print(f"CLIP loaded as HookedViT")
 
         # Create CLIP classifier for this model
-        from gradcamfaith.models.clip_classifier import create_clip_classifier
+        from featuregating.models.clip_classifier import create_clip_classifier
         print("Creating CLIP classifier...")
         clip_classifier = create_clip_classifier(
             vision_model=model,

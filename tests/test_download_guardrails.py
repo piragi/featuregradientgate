@@ -1,6 +1,6 @@
 from pathlib import Path
 
-import gradcamfaith.data.download as download
+import featuregating.datasets.download as download
 
 
 class _FakeTar:

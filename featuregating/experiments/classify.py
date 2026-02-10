@@ -9,17 +9,17 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import torch
 
-from gradcamfaith.core.attribution import compute_attribution
-from gradcamfaith.core.config import FileConfig, PipelineConfig
-from gradcamfaith.core.types import (
+from featuregating.core.attribution import compute_attribution
+from featuregating.core.config import FileConfig, PipelineConfig
+from featuregating.core.types import (
     AttributionDataBundle,
     AttributionOutputPaths,
     ClassificationPrediction,
     ClassificationResult,
 )
-from gradcamfaith.data import io_utils
-from gradcamfaith.data.dataloader import get_single_image_loader
-from gradcamfaith.data.dataset_config import DatasetConfig
+from featuregating.datasets import io_utils
+from featuregating.datasets.dataloader import get_single_image_loader
+from featuregating.datasets.dataset_config import DatasetConfig
 
 
 def save_attribution_bundle_to_files(

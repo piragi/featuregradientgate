@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
-from gradcamfaith.models.sae_extraction import extract_sae_activations_if_needed  # noqa: F401
+from featuregating.models.sae_extraction import extract_sae_activations_if_needed  # noqa: F401
 
 
 def _patch_grid(n_patches: int) -> Tuple[int, int]:
@@ -748,7 +748,7 @@ def run_case_study_analysis(
     use_validation_prototypes = validation_activations_path is not None
 
     # Load dataset config for preprocessing
-    from gradcamfaith.data.dataset_config import get_dataset_config
+    from featuregating.datasets.dataset_config import get_dataset_config
     dataset_config = get_dataset_config(dataset)
 
     # Determine image directories

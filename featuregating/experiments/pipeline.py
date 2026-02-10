@@ -15,15 +15,15 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-from gradcamfaith.core.config import PipelineConfig
-from gradcamfaith.core.types import ClassificationResult
-from gradcamfaith.data import io_utils
-from gradcamfaith.data.dataloader import create_dataloader
-from gradcamfaith.data.dataset_config import get_dataset_config
-from gradcamfaith.data.setup import prepare_dataset_if_needed
-from gradcamfaith.experiments.classify import classify_explain_single_image
-from gradcamfaith.experiments.faithfulness import compute_faithfulness
-from gradcamfaith.experiments.saco import extract_saco_summary, run_binned_attribution_analysis
+from featuregating.core.config import PipelineConfig
+from featuregating.core.types import ClassificationResult
+from featuregating.datasets import io_utils
+from featuregating.datasets.dataloader import create_dataloader
+from featuregating.datasets.dataset_config import get_dataset_config
+from featuregating.datasets.setup import prepare_dataset_if_needed
+from featuregating.experiments.classify import classify_explain_single_image
+from featuregating.experiments.faithfulness import compute_faithfulness
+from featuregating.experiments.saco import extract_saco_summary, run_binned_attribution_analysis
 
 # Suppress PIL debug logging
 logging.getLogger('PIL').setLevel(logging.WARNING)
@@ -142,7 +142,7 @@ def run_unified_pipeline(
     # For CLIP models, wrap the classifier for both faithfulness and attribution analysis
     model_for_analysis = model
     if clip_classifier is not None:
-        from gradcamfaith.models.clip_classifier import CLIPModelWrapper
+        from featuregating.models.clip_classifier import CLIPModelWrapper
         model_for_analysis = CLIPModelWrapper(clip_classifier)
         print("Using CLIP wrapper for analysis")
 

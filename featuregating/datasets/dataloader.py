@@ -13,7 +13,7 @@ import torch
 from torchvision.datasets import ImageFolder
 from PIL import Image
 
-from gradcamfaith.data.dataset_config import DatasetConfig, get_dataset_config
+from featuregating.datasets.dataset_config import DatasetConfig, get_dataset_config
 
 
 class UnifiedMedicalDataset:

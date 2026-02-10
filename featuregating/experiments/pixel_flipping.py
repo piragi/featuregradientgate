@@ -9,7 +9,7 @@ import math
 
 import numpy as np
 
-from gradcamfaith.experiments.faithfulness import (
+from featuregating.experiments.faithfulness import (
     _BatchedFaithfulnessMetric,
     apply_baseline_perturbation,
     create_patch_mask,

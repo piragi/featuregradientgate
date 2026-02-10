@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from gradcamfaith.data.dataset_config import get_dataset_config
+from featuregating.datasets.dataset_config import get_dataset_config
 
 
 # ---------------------------------------------------------------------------
@@ -176,8 +176,8 @@ class _BatchedFaithfulnessMetric:
 
 def calc_faithfulness(model, x_batch, y_batch, a_batch_expl, device, config, n_patches=196):
     """Run all faithfulness estimators with multi-trial statistical robustness."""
-    from gradcamfaith.experiments.faithfulness_correlation import FaithfulnessCorrelation
-    from gradcamfaith.experiments.pixel_flipping import PatchPixelFlipping
+    from featuregating.experiments.faithfulness_correlation import FaithfulnessCorrelation
+    from featuregating.experiments.pixel_flipping import PatchPixelFlipping
 
     n_trials = config.faithfulness.n_trials
     nr_runs = config.faithfulness.nr_runs
