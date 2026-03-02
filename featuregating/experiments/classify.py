@@ -10,6 +10,10 @@ import numpy as np
 import torch
 
 from featuregating.core.attribution import compute_attribution
+from featuregating.experiments.baselines import (
+    compute_gradcam_vit,
+    compute_rollout_attribution,
+)
 from featuregating.core.config import FileConfig, PipelineConfig
 from featuregating.core.types import (
     AttributionDataBundle,
@@ -72,19 +76,39 @@ def classify_explain_single_image(
     input_tensor = get_single_image_loader(image_path, dataset_config)
     input_tensor = input_tensor.to(device)
 
-    raw_attribution_result_dict = compute_attribution(
-        model_prisma=model,
-        input_tensor=input_tensor,
-        config=config,
-        idx_to_class=dataset_config.idx_to_class,  # Pass dataset-specific class mapping
-        device=device,
-        steering_resources=steering_resources,
-        enable_feature_gradients=config.classify.boosting.enable_feature_gradients,
-        feature_gradient_layers=config.classify.boosting.feature_gradient_layers
-        if config.classify.boosting.enable_feature_gradients else [],
-        clip_classifier=clip_classifier,
-        debug=getattr(config.classify.boosting, 'debug_mode', False),
-    )
+    method = config.classify.attribution_method
+    if method == "rollout":
+        raw_attribution_result_dict = compute_rollout_attribution(
+            model_prisma=model,
+            input_tensor=input_tensor,
+            config=config,
+            idx_to_class=dataset_config.idx_to_class,
+            device=device,
+            clip_classifier=clip_classifier,
+        )
+    elif method == "gradcam":
+        raw_attribution_result_dict = compute_gradcam_vit(
+            model_prisma=model,
+            input_tensor=input_tensor,
+            config=config,
+            idx_to_class=dataset_config.idx_to_class,
+            device=device,
+            clip_classifier=clip_classifier,
+        )
+    else:
+        raw_attribution_result_dict = compute_attribution(
+            model_prisma=model,
+            input_tensor=input_tensor,
+            config=config,
+            idx_to_class=dataset_config.idx_to_class,
+            device=device,
+            steering_resources=steering_resources,
+            enable_feature_gradients=config.classify.boosting.enable_feature_gradients,
+            feature_gradient_layers=config.classify.boosting.feature_gradient_layers
+            if config.classify.boosting.enable_feature_gradients else [],
+            clip_classifier=clip_classifier,
+            debug=getattr(config.classify.boosting, 'debug_mode', False),
+        )
 
     # Extract raw attribution and debug info
     raw_attr = raw_attribution_result_dict.get("raw_attribution", np.array([]))

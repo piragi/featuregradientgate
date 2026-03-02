@@ -55,6 +55,7 @@ class SweepConfig:
     output_base_dir: Optional[Path] = None
     subset_size: Optional[int] = None
     random_seed: int = 42
+    run_baselines: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +110,9 @@ def _build_pipeline_config(
     pipeline_config.classify.analysis = True
     pipeline_config.classify.boosting.debug_mode = debug_mode
 
+    pipeline_config.classify.attribution_method = experiment_params.get(
+        'attribution_method', 'default',
+    )
     _configure_clip_for_imagenet(pipeline_config, dataset_name)
     _configure_boosting(pipeline_config, experiment_params)
 
@@ -142,16 +146,30 @@ def _build_experiment_grid(
     gate_constructions: List[str],
     shuffle_decoder_options: List[bool],
     clamp_max_values: List[float],
+    run_baselines: bool = True,
 ) -> List[Tuple[str, Dict[str, Any]]]:
-    """Generate the full experiment list: vanilla baseline + all gated combinations.
+    """Generate the full experiment list: baselines + vanilla + all gated combinations.
 
-    The first entry is always the vanilla baseline (``enable_feature_gradients=False``).
-    This provides an ungated reference run against which all gated experiments are compared.
+    The first entries are attribution baselines (rollout, gradcam) when enabled,
+    followed by the vanilla baseline (``enable_feature_gradients=False``).
+    This provides ungated reference runs against which all gated experiments are compared.
 
     Returns:
         List of (experiment_name, experiment_params) tuples.
     """
     experiments: List[Tuple[str, Dict[str, Any]]] = []
+
+    # Attribution baselines — run once per dataset as comparison points
+    if run_baselines:
+        for method in ("rollout", "gradcam"):
+            experiments.append((method, {
+                'use_feature_gradients': False,
+                'feature_gradient_layers': [],
+                'kappa': 0,
+                'gate_construction': 'combined',
+                'shuffle_decoder': False,
+                'attribution_method': method,
+            }))
 
     # Vanilla baseline — ungated TransLRP attribution (always first)
     experiments.append(("vanilla", {
@@ -376,7 +394,8 @@ def run_parameter_sweep(
     debug_mode: bool = False,
     output_base_dir: Optional[Path] = None,
     subset_size: Optional[int] = None,
-    random_seed: int = 42
+    random_seed: int = 42,
+    run_baselines: bool = True,
 ) -> Dict[str, List[Dict]]:
     """
     Run a parameter sweep comparing vanilla TransLRP with feature gradient gating.
@@ -420,7 +439,7 @@ def run_parameter_sweep(
 
     experiments = _build_experiment_grid(
         layer_combinations, kappa_values, gate_constructions,
-        shuffle_decoder_options, clamp_max_values,
+        shuffle_decoder_options, clamp_max_values, run_baselines,
     )
 
     all_results = {}
@@ -486,9 +505,11 @@ def main():
             # ("covidquex", Path("./data/covidquex/data/lung/")),
         ],
         current_mode="test",
+        gate_constructions=["combined", "no_SAE"],
         layer_combinations=[[6,7,8]],
-        subset_size=100,
+        subset_size=None,
         random_seed=123,
+        shuffle_decoder_options=[False, True],
         debug_mode=True,
     )
 

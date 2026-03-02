@@ -116,6 +116,7 @@ class ClassificationConfig:
     clip_text_prompts: Optional[List[str]] = None  # If None, uses dataset defaults
 
     analysis: bool = False
+    attribution_method: str = "default"  # "default", "rollout", or "gradcam"
 
     # Device configuration
     device: Optional[str] = None  # None will use CUDA if available

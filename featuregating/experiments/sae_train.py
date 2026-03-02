@@ -19,7 +19,7 @@ logging.getLogger('PIL').setLevel(logging.WARNING)
 # ============ SWEEP CONFIG ============
 SWEEP_CONFIG = {
     'dataset': 'covidquex',  # single dataset for sweep
-    'layers': [4, 5, 6, 7, 8, 9, 10],  # which layers to train
+    'layers': [2,3,4, 5, 6, 7, 8, 9, 10],  # which layers to train
 
     # Hyperparameters to sweep
     'expansion_factors': [64],  # Higher = more features to capture variance
@@ -35,88 +35,209 @@ SWEEP_CONFIG = {
 }
 
 
-def train_single_config(dataset_name, layer_idx, expansion_factor, k, lr):
+def _gpu_cleanup():
+    """Lightweight cleanup between runs while keeping shared model in memory."""
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _move_to_cpu(obj):
+    """Move a module/object to CPU if it supports .to()."""
+    if obj is None:
+        return
+
+    to_fn = getattr(obj, "to", None)
+    if callable(to_fn):
+        try:
+            to_fn("cpu")
+        except Exception:
+            pass
+
+
+def _clear_activation_store(store):
+    """Release heavy references held by vit_prisma activation stores."""
+    if store is None:
+        return
+
+    # These objects commonly live on CUDA.
+    _move_to_cpu(getattr(store, "model", None))
+
+    for tensor_attr in ("storage_buffer", "storage_buffer_out"):
+        if not hasattr(store, tensor_attr):
+            continue
+        tensor = getattr(store, tensor_attr)
+        if torch.is_tensor(tensor):
+            try:
+                setattr(store, tensor_attr, tensor.cpu())
+            except Exception:
+                pass
+
+    # Drop iterator/dataloader references so worker/process state can be GC'd.
+    for attr in (
+        "dataloader",
+        "image_dataloader",
+        "image_dataloader_iter",
+        "image_dataloader_eval",
+        "image_dataloader_eval_iter",
+        "dataset",
+        "eval_dataset",
+        "model",
+    ):
+        if hasattr(store, attr):
+            try:
+                setattr(store, attr, None)
+            except Exception:
+                pass
+
+    # Best-effort close hooks for future compatibility.
+    for method_name in ("close", "cleanup", "shutdown", "clear"):
+        method = getattr(store, method_name, None)
+        if callable(method):
+            try:
+                method()
+            except Exception:
+                pass
+
+
+def _clear_model_hooks(model):
+    """Clear forward/backward hooks if the model exposes helper methods."""
+    if model is None:
+        return
+
+    for method_name in ("reset_hooks", "remove_all_hook_fns", "remove_all_hooks"):
+        method = getattr(model, method_name, None)
+        if callable(method):
+            try:
+                method()
+            except Exception:
+                pass
+            break
+
+
+def _clear_trainer_refs(trainer):
+    """Drop common heavy trainer references to speed up GC."""
+    if trainer is None:
+        return
+
+    heavy_attrs = (
+        "sae",
+        "sparse_coder",
+        "model",
+        "optimizer",
+        "scheduler",
+        "dataset",
+        "eval_dataset",
+        "train_dataset",
+        "val_dataset",
+        "train_loader",
+        "val_loader",
+        "train_dataloader",
+        "val_dataloader",
+        "activation_store",
+        "activations_store",
+    )
+
+    for attr in heavy_attrs:
+        if not hasattr(trainer, attr):
+            continue
+        value = getattr(trainer, attr)
+        if attr in ("activation_store", "activations_store"):
+            _clear_activation_store(value)
+        _move_to_cpu(value)
+        try:
+            setattr(trainer, attr, None)
+        except Exception:
+            pass
+
+
+def _load_shared_resources(dataset_name):
+    """Load model and datasets once for an entire sweep."""
+    dataset_config = get_dataset_config(dataset_name)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    hooked_model, _ = load_model_for_dataset(dataset_config, device)
+
+    data_path = Path(f"data/prepared/{dataset_name}")
+    train_path = data_path / "train"
+    val_path = data_path / "val"
+
+    transform = dataset_config.get_transforms('train')
+    val_transform = dataset_config.get_transforms('test')
+
+    train_dataset = torchvision.datasets.ImageFolder(train_path, transform)
+    val_dataset = torchvision.datasets.ImageFolder(val_path, val_transform)
+
+    return hooked_model, train_dataset, val_dataset
+
+
+def train_single_config(dataset_name, layer_idx, expansion_factor, k, lr, hooked_model, train_dataset, val_dataset):
     """Train a single SAE configuration."""
 
     print(f"\n{'='*60}")
     print(f"Training: expansion={expansion_factor}, k={k}, lr={lr}")
     print(f"{'='*60}")
 
-    # Load dataset config
-    dataset_config = get_dataset_config(dataset_name)
-
-    # Load model
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    hooked_model, _ = load_model_for_dataset(dataset_config, device)
-
-    # Set up data paths
-    data_path = Path(f"data/prepared/{dataset_name}")
-    train_path = data_path / "train"
-    val_path = data_path / "val"
-
-    # Get dataset-specific transforms
-    transform = dataset_config.get_transforms('train')
-    val_transform = dataset_config.get_transforms('test')  # No augmentations for validation
-
-    # Load datasets
-    train_dataset = torchvision.datasets.ImageFolder(train_path, transform)
-    val_dataset = torchvision.datasets.ImageFolder(val_path, val_transform)
-
-    # SAE config
-    run_config = VisionModelSAERunnerConfig(
-        model_name="vit_base_patch16_224",
-        layer_subtype='hook_resid_post',
-        cls_token_only=False,
-        context_size=197,
-        expansion_factor=expansion_factor,
-        activation_fn_str="topk",
-        activation_fn_kwargs={'k': k},
-        lr=lr,
-        train_batch_size=SWEEP_CONFIG['batch_size'],
-        num_epochs=SWEEP_CONFIG['epochs'],
-        num_workers=SWEEP_CONFIG['num_workers'],
-        lr_scheduler_name="cosineannealingwarmup",
-        lr_warm_up_steps=500,
-        n_batches_in_buffer=64,
-        initialization_method="encoder_transpose_decoder",
-        dataset_name=dataset_name,
-        log_to_wandb=SWEEP_CONFIG['log_to_wandb'],
-        wandb_project=SWEEP_CONFIG['wandb_project'],
-        n_checkpoints=1,
-        use_ghost_grads=True,
-        dead_feature_threshold=1e-8,
-        feature_sampling_window=1000,
-        dead_feature_window=5000,
-    )
-
-    run_config.hook_point_layer = layer_idx
-    run_config.dataset_size = len(train_dataset)
-
-    # Set up save directory
-    save_dir = Path(f"data/sae_sweep/{dataset_name}/layer_{layer_idx}/exp{expansion_factor}_k{k}_lr{lr}")
-    save_dir.mkdir(parents=True, exist_ok=True)
-    run_config.checkpoint_path = str(save_dir)
-
-    # Add sweep info to wandb config
-    if SWEEP_CONFIG['log_to_wandb']:
-        wandb.init(
-            project=SWEEP_CONFIG['wandb_project'],
-            config={
-                'expansion_factor': expansion_factor,
-                'k': k,
-                'lr': lr,
-                'layer': layer_idx,
-                'dataset': dataset_name,
-                'epochs': SWEEP_CONFIG['epochs'],
-            },
-            name=f"exp{expansion_factor}_k{k}_lr{lr}_l{layer_idx}",
-            reinit=True
-        )
-
-    trainer = VisionSAETrainer(run_config, hooked_model, train_dataset, val_dataset)
+    trainer = None
+    trained_sae = None
+    save_dir = None
 
     try:
+        # SAE config
+        run_config = VisionModelSAERunnerConfig(
+            model_name="vit_base_patch16_224",
+            layer_subtype='hook_resid_post',
+            cls_token_only=False,
+            context_size=197,
+            expansion_factor=expansion_factor,
+            activation_fn_str="relu",
+            activation_fn_kwargs={'k': k},
+            lr=lr,
+            train_batch_size=SWEEP_CONFIG['batch_size'],
+            num_epochs=SWEEP_CONFIG['epochs'],
+            num_workers=SWEEP_CONFIG['num_workers'],
+            lr_scheduler_name="cosineannealingwarmup",
+            lr_warm_up_steps=500,
+            n_batches_in_buffer=64,
+            initialization_method="encoder_transpose_decoder",
+            dataset_name=dataset_name,
+            log_to_wandb=SWEEP_CONFIG['log_to_wandb'],
+            wandb_project=SWEEP_CONFIG['wandb_project'],
+            n_checkpoints=1,
+            use_ghost_grads=True,
+            dead_feature_threshold=1e-8,
+            feature_sampling_window=1000,
+            dead_feature_window=5000,
+        )
+
+        run_config.hook_point_layer = layer_idx
+        run_config.dataset_size = len(train_dataset)
+
+        # Set up save directory
+        save_dir = Path(f"data/sae_sweep/{dataset_name}/layer_{layer_idx}/exp{expansion_factor}_k{k}_lr{lr}")
+        save_dir.mkdir(parents=True, exist_ok=True)
+        run_config.checkpoint_path = str(save_dir)
+
+        # Add sweep info to wandb config
+        if SWEEP_CONFIG['log_to_wandb']:
+            wandb.init(
+                project=SWEEP_CONFIG['wandb_project'],
+                config={
+                    'expansion_factor': expansion_factor,
+                    'k': k,
+                    'lr': lr,
+                    'layer': layer_idx,
+                    'dataset': dataset_name,
+                    'epochs': SWEEP_CONFIG['epochs'],
+                },
+                name=f"exp{expansion_factor}_k{k}_lr{lr}_l{layer_idx}",
+                reinit=True
+            )
+
+        trainer = VisionSAETrainer(run_config, hooked_model, train_dataset, val_dataset)
+
         trained_sae = trainer.run()
+
+        run_summary = wandb.run.summary if wandb.run is not None else {}
 
         # Extract metrics
         metrics = {
@@ -124,10 +245,10 @@ def train_single_config(dataset_name, layer_idx, expansion_factor, k, lr):
             'k': k,
             'lr': lr,
             'layer': layer_idx,
-            'explained_variance': wandb.run.summary.get('metrics/explained_variance', 0),
-            'mse_loss': wandb.run.summary.get('losses/mse_loss', 0),
-            'dead_features': wandb.run.summary.get('sparsity/dead_features', 0),
-            'l0': wandb.run.summary.get('metrics/l0', 0),
+            'explained_variance': run_summary.get('metrics/explained_variance', 0),
+            'mse_loss': run_summary.get('losses/mse_loss', 0),
+            'dead_features': run_summary.get('sparsity/dead_features', 0),
+            'l0': run_summary.get('metrics/l0', 0),
         }
 
         # Save metrics
@@ -145,16 +266,14 @@ def train_single_config(dataset_name, layer_idx, expansion_factor, k, lr):
     finally:
         wandb.finish()
 
-        # Cleanup
-        if 'trained_sae' in locals():
-            del trained_sae
+        # Per-run cleanup while keeping shared model and datasets alive.
+        _clear_trainer_refs(trainer)
+        _clear_model_hooks(hooked_model)
+        _move_to_cpu(trained_sae)
         del trainer
-        del hooked_model
+        del trained_sae
 
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-        gc.collect()
+        _gpu_cleanup()
 
 
 def main():
@@ -177,25 +296,50 @@ def main():
 
     all_results = {}  # Store results by layer
 
-    for i, (layer_idx, (exp_factor, k, lr)) in enumerate(all_configs, 1):
-        print(f"\n[{i}/{len(all_configs)}] Running Layer {layer_idx} with exp_factor={exp_factor}, k={k}, lr={lr}")
+    hooked_model = None
+    train_dataset = None
+    val_dataset = None
 
-        metrics = train_single_config(dataset_name, layer_idx, exp_factor, k, lr)
+    try:
+        print("Loading shared model and datasets once for the full sweep...")
+        hooked_model, train_dataset, val_dataset = _load_shared_resources(dataset_name)
 
-        if metrics:
-            # Initialize layer results list if needed
-            if layer_idx not in all_results:
-                all_results[layer_idx] = []
+        for i, (layer_idx, (exp_factor, k, lr)) in enumerate(all_configs, 1):
+            print(f"\n[{i}/{len(all_configs)}] Running Layer {layer_idx} with exp_factor={exp_factor}, k={k}, lr={lr}")
 
-            all_results[layer_idx].append(metrics)
+            metrics = train_single_config(
+                dataset_name,
+                layer_idx,
+                exp_factor,
+                k,
+                lr,
+                hooked_model=hooked_model,
+                train_dataset=train_dataset,
+                val_dataset=val_dataset,
+            )
 
-            # Save intermediate results for this layer
-            with open(f'sweep_results_{dataset_name}_layer{layer_idx}.json', 'w') as f:
-                json.dump(all_results[layer_idx], f, indent=2)
+            if metrics:
+                # Initialize layer results list if needed
+                if layer_idx not in all_results:
+                    all_results[layer_idx] = []
 
-            # Also save combined results
-            with open(f'sweep_results_{dataset_name}_all_layers.json', 'w') as f:
-                json.dump(all_results, f, indent=2)
+                all_results[layer_idx].append(metrics)
+
+                # Save intermediate results for this layer
+                with open(f'sweep_results_{dataset_name}_layer{layer_idx}.json', 'w') as f:
+                    json.dump(all_results[layer_idx], f, indent=2)
+
+                # Also save combined results
+                with open(f'sweep_results_{dataset_name}_all_layers.json', 'w') as f:
+                    json.dump(all_results, f, indent=2)
+    finally:
+        # End-of-sweep cleanup.
+        _clear_model_hooks(hooked_model)
+        _move_to_cpu(hooked_model)
+        del train_dataset
+        del val_dataset
+        del hooked_model
+        _gpu_cleanup()
 
     # Find best configuration per layer and overall
     if all_results:
