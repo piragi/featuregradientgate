@@ -19,17 +19,21 @@ logging.getLogger('PIL').setLevel(logging.WARNING)
 # ============ SWEEP CONFIG ============
 SWEEP_CONFIG = {
     'dataset': 'covidquex',  # single dataset for sweep
-    'layers': [2,3,4, 5, 6, 7, 8, 9, 10],  # which layers to train
+    'layers': [2, 3, 4, 5, 6, 7, 8, 9, 10],  # all covidquex layers
 
     # Hyperparameters to sweep
     'expansion_factors': [64],  # Higher = more features to capture variance
-    'k_values': [128],  # TopK active features
-    'learning_rates': [5e-4, 1e-3],  # Learning rates
+    'l1_coefficients': [1e-5],  # Locked best ReLU sparsity
+    'learning_rates': [4e-4],  # Locked best LR
 
     # Fixed parameters
-    'epochs': 3,  # Reduced to 3 epochs
+    'epochs': 6,
     'batch_size': 4096,
     'num_workers': 10,  # Reduced from 16 to avoid warning
+    'n_batches_in_buffer': 20,
+    'lr_warm_up_steps': 200,
+    'normalize_activations': None,  # Match published ReLU setup
+    'wandb_log_frequency': 100,
     'wandb_project': 'vit_sae_sweep',
     'log_to_wandb': True,
 }
@@ -170,11 +174,11 @@ def _load_shared_resources(dataset_name):
     return hooked_model, train_dataset, val_dataset
 
 
-def train_single_config(dataset_name, layer_idx, expansion_factor, k, lr, hooked_model, train_dataset, val_dataset):
+def train_single_config(dataset_name, layer_idx, expansion_factor, l1_coeff, lr, hooked_model, train_dataset, val_dataset):
     """Train a single SAE configuration."""
 
     print(f"\n{'='*60}")
-    print(f"Training: expansion={expansion_factor}, k={k}, lr={lr}")
+    print(f"Training: expansion={expansion_factor}, l1={l1_coeff}, lr={lr}")
     print(f"{'='*60}")
 
     trainer = None
@@ -190,18 +194,21 @@ def train_single_config(dataset_name, layer_idx, expansion_factor, k, lr, hooked
             context_size=197,
             expansion_factor=expansion_factor,
             activation_fn_str="relu",
-            activation_fn_kwargs={'k': k},
+            activation_fn_kwargs={},
+            l1_coefficient=l1_coeff,
             lr=lr,
             train_batch_size=SWEEP_CONFIG['batch_size'],
             num_epochs=SWEEP_CONFIG['epochs'],
             num_workers=SWEEP_CONFIG['num_workers'],
             lr_scheduler_name="cosineannealingwarmup",
-            lr_warm_up_steps=500,
-            n_batches_in_buffer=64,
+            lr_warm_up_steps=SWEEP_CONFIG['lr_warm_up_steps'],
+            n_batches_in_buffer=SWEEP_CONFIG['n_batches_in_buffer'],
             initialization_method="encoder_transpose_decoder",
+            normalize_activations=SWEEP_CONFIG['normalize_activations'],
             dataset_name=dataset_name,
             log_to_wandb=SWEEP_CONFIG['log_to_wandb'],
             wandb_project=SWEEP_CONFIG['wandb_project'],
+            wandb_log_frequency=SWEEP_CONFIG['wandb_log_frequency'],
             n_checkpoints=1,
             use_ghost_grads=True,
             dead_feature_threshold=1e-8,
@@ -213,7 +220,7 @@ def train_single_config(dataset_name, layer_idx, expansion_factor, k, lr, hooked
         run_config.dataset_size = len(train_dataset)
 
         # Set up save directory
-        save_dir = Path(f"data/sae_sweep/{dataset_name}/layer_{layer_idx}/exp{expansion_factor}_k{k}_lr{lr}")
+        save_dir = Path(f"data/sae_sweep/{dataset_name}/layer_{layer_idx}/exp{expansion_factor}_l1{l1_coeff}_lr{lr}")
         save_dir.mkdir(parents=True, exist_ok=True)
         run_config.checkpoint_path = str(save_dir)
 
@@ -223,13 +230,13 @@ def train_single_config(dataset_name, layer_idx, expansion_factor, k, lr, hooked
                 project=SWEEP_CONFIG['wandb_project'],
                 config={
                     'expansion_factor': expansion_factor,
-                    'k': k,
+                    'l1_coefficient': l1_coeff,
                     'lr': lr,
                     'layer': layer_idx,
                     'dataset': dataset_name,
                     'epochs': SWEEP_CONFIG['epochs'],
                 },
-                name=f"exp{expansion_factor}_k{k}_lr{lr}_l{layer_idx}",
+                name=f"exp{expansion_factor}_l1-{l1_coeff}_lr{lr}_l{layer_idx}",
                 reinit=True
             )
 
@@ -242,7 +249,7 @@ def train_single_config(dataset_name, layer_idx, expansion_factor, k, lr, hooked
         # Extract metrics
         metrics = {
             'expansion_factor': expansion_factor,
-            'k': k,
+            'l1_coefficient': l1_coeff,
             'lr': lr,
             'layer': layer_idx,
             'explained_variance': run_summary.get('metrics/explained_variance', 0),
@@ -284,7 +291,11 @@ def main():
 
     # Generate all combinations of hyperparameters and layers
     hyperparams = list(
-        itertools.product(SWEEP_CONFIG['expansion_factors'], SWEEP_CONFIG['k_values'], SWEEP_CONFIG['learning_rates'])
+        itertools.product(
+            SWEEP_CONFIG['expansion_factors'],
+            SWEEP_CONFIG['l1_coefficients'],
+            SWEEP_CONFIG['learning_rates'],
+        )
     )
 
     all_configs = list(itertools.product(layers, hyperparams))
@@ -304,14 +315,17 @@ def main():
         print("Loading shared model and datasets once for the full sweep...")
         hooked_model, train_dataset, val_dataset = _load_shared_resources(dataset_name)
 
-        for i, (layer_idx, (exp_factor, k, lr)) in enumerate(all_configs, 1):
-            print(f"\n[{i}/{len(all_configs)}] Running Layer {layer_idx} with exp_factor={exp_factor}, k={k}, lr={lr}")
+        for i, (layer_idx, (exp_factor, l1_coeff, lr)) in enumerate(all_configs, 1):
+            print(
+                f"\n[{i}/{len(all_configs)}] Running Layer {layer_idx} "
+                f"with exp_factor={exp_factor}, l1={l1_coeff}, lr={lr}"
+            )
 
             metrics = train_single_config(
                 dataset_name,
                 layer_idx,
                 exp_factor,
-                k,
+                l1_coeff,
                 lr,
                 hooked_model=hooked_model,
                 train_dataset=train_dataset,
@@ -356,7 +370,7 @@ def main():
                 best = max(layer_results, key=lambda x: x['explained_variance'])
                 print(f"\nLayer {layer_idx}:")
                 print(f"  Expansion Factor: {best['expansion_factor']}")
-                print(f"  K (TopK): {best['k']}")
+                print(f"  L1 Coefficient: {best['l1_coefficient']}")
                 print(f"  Learning Rate: {best['lr']}")
                 print(f"  Explained Variance: {best['explained_variance']:.4f}")
 
@@ -370,7 +384,7 @@ def main():
             print(f"OVERALL BEST CONFIGURATION:")
             print(f"Layer: {overall_best['layer']}")
             print(f"Expansion Factor: {overall_best['expansion_factor']}")
-            print(f"K (TopK): {overall_best['k']}")
+            print(f"L1 Coefficient: {overall_best['l1_coefficient']}")
             print(f"Learning Rate: {overall_best['lr']}")
             print(f"Explained Variance: {overall_best['explained_variance']:.4f}")
             print(f"{'='*60}")
