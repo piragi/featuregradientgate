@@ -13,6 +13,7 @@ from featuregating.core.attribution import compute_attribution
 from featuregating.experiments.baselines import (
     compute_gradcam_vit,
     compute_rollout_attribution,
+    compute_tokentm_attribution,
 )
 from featuregating.core.config import FileConfig, PipelineConfig
 from featuregating.core.types import (
@@ -88,6 +89,15 @@ def classify_explain_single_image(
         )
     elif method == "gradcam":
         raw_attribution_result_dict = compute_gradcam_vit(
+            model_prisma=model,
+            input_tensor=input_tensor,
+            config=config,
+            idx_to_class=dataset_config.idx_to_class,
+            device=device,
+            clip_classifier=clip_classifier,
+        )
+    elif method == "tokentm":
+        raw_attribution_result_dict = compute_tokentm_attribution(
             model_prisma=model,
             input_tensor=input_tensor,
             config=config,

@@ -90,6 +90,7 @@ class BoostingConfig:
     kappa: float = 10.0  # Sweep metadata only — not used in gate formula (kept for experiment naming)
     clamp_min: float = 0.1  # Minimum gate value (1/clamp_max)
     clamp_max: float = 10.0  # Base for exponential gate mapping: gate = clamp_max^(tanh(s_norm))
+    alpha: float = 1.0  # Tanh steepness: gate = clamp_max^(tanh(alpha * s_norm))
     gate_construction: str = "combined"  # Type of gate: "activation_only", "gradient_only", or "combined"
     shuffle_decoder: bool = False  # Shuffle decoder columns to break semantic alignment
     shuffle_decoder_seed: int = 12345  # Random seed for decoder shuffling (reproducibility)
@@ -116,7 +117,7 @@ class ClassificationConfig:
     clip_text_prompts: Optional[List[str]] = None  # If None, uses dataset defaults
 
     analysis: bool = False
-    attribution_method: str = "default"  # "default", "rollout", or "gradcam"
+    attribution_method: str = "default"  # "default", "rollout", "gradcam", or "tokentm"
 
     # Device configuration
     device: Optional[str] = None  # None will use CUDA if available

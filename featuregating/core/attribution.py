@@ -63,6 +63,7 @@ def apply_gradient_gating_to_cam(
     # Apply feature gradient gating - get parameters from config
     gating_config = {
         'clamp_max': config.classify.boosting.clamp_max,
+        'alpha': config.classify.boosting.alpha,
         'gate_construction': config.classify.boosting.gate_construction,
         'shuffle_decoder': config.classify.boosting.shuffle_decoder,
         'shuffle_decoder_seed': config.classify.boosting.shuffle_decoder_seed,

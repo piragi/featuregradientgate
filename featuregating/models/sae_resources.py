@@ -34,7 +34,7 @@ def load_steering_resources(layers: List[int], dataset_name: Optional[str] = Non
                 sae.cuda().eval()
             else:
                 # Load SAE for other datasets
-                sae_dir = Path("data") / f"sae_{dataset_name}" / f"layer_{layer_idx}"
+                sae_dir = Path("data") / "sae_sweep" / f"{dataset_name}" / f"layer_{layer_idx}"
                 sae_files = list(sae_dir.glob("**/n_images_*.pt"))
                 # Filter out log_feature_sparsity files
                 sae_files = [f for f in sae_files if 'log_feature_sparsity' not in str(f)]
@@ -59,7 +59,7 @@ def load_steering_resources(layers: List[int], dataset_name: Optional[str] = Non
     if missing:
         raise FileNotFoundError(
             f"SAE weights missing for {dataset_name} layers {missing}. "
-            f"Expected paths: data/sae_{dataset_name}/layer_<idx>/"
+            f"Expected paths: data/sae_sweep/{dataset_name}/layer_<idx>/"
         )
 
     return resources

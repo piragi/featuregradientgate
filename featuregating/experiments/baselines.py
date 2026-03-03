@@ -401,7 +401,7 @@ def compute_tokentm_attribution(
         C = U_ffn @ U_mhsa @ C
 
     # CLS row, patch columns
-    patch_scores = C[0, 1:].clone()
+    patch_scores = C[0, 1:].detach().clone()
     attribution_map, raw = _postprocess(patch_scores, img_size)
 
     return {

@@ -18,21 +18,22 @@ logging.getLogger('PIL').setLevel(logging.WARNING)
 
 # ============ SWEEP CONFIG ============
 SWEEP_CONFIG = {
-    'dataset': 'covidquex',  # single dataset for sweep
-    'layers': [2, 3, 4, 5, 6, 7, 8, 9, 10],  # all covidquex layers
+    'dataset': 'hyperkvasir',  # run across hyperkvasir layers
+    'layers': [2, 3, 4, 5, 6, 7, 8, 9, 10],  # full comparable layer range
 
-    # Hyperparameters to sweep
-    'expansion_factors': [64],  # Higher = more features to capture variance
-    'l1_coefficients': [1e-5],  # Locked best ReLU sparsity
-    'learning_rates': [4e-4],  # Locked best LR
+    # Locked hyperparameters for the all-layer run
+    'expansion_factors': [64],  # Stay with exp64 to avoid OOM on this GPU
+    'l1_coefficients': [2e-6],  # Better sparsity than 1e-6 with near-identical EV
+    'learning_rates': [9e-4],  # Highest EV observed on layer 3
 
     # Fixed parameters
-    'epochs': 6,
+    'epoch_values': [18],  # Highest EV observed on layer 3
     'batch_size': 4096,
     'num_workers': 10,  # Reduced from 16 to avoid warning
     'n_batches_in_buffer': 20,
     'lr_warm_up_steps': 200,
-    'normalize_activations': None,  # Match published ReLU setup
+    'n_validation_runs': 2,  # Keep some validation signal with lower overhead
+    'normalize_activations': "layer_norm",  # More stable on smaller/noisier datasets
     'wandb_log_frequency': 100,
     'wandb_project': 'vit_sae_sweep',
     'log_to_wandb': True,
@@ -174,11 +175,21 @@ def _load_shared_resources(dataset_name):
     return hooked_model, train_dataset, val_dataset
 
 
-def train_single_config(dataset_name, layer_idx, expansion_factor, l1_coeff, lr, hooked_model, train_dataset, val_dataset):
+def train_single_config(
+    dataset_name,
+    layer_idx,
+    expansion_factor,
+    l1_coeff,
+    lr,
+    num_epochs,
+    hooked_model,
+    train_dataset,
+    val_dataset,
+):
     """Train a single SAE configuration."""
 
     print(f"\n{'='*60}")
-    print(f"Training: expansion={expansion_factor}, l1={l1_coeff}, lr={lr}")
+    print(f"Training: expansion={expansion_factor}, l1={l1_coeff}, lr={lr}, epochs={num_epochs}")
     print(f"{'='*60}")
 
     trainer = None
@@ -198,10 +209,11 @@ def train_single_config(dataset_name, layer_idx, expansion_factor, l1_coeff, lr,
             l1_coefficient=l1_coeff,
             lr=lr,
             train_batch_size=SWEEP_CONFIG['batch_size'],
-            num_epochs=SWEEP_CONFIG['epochs'],
+            num_epochs=num_epochs,
             num_workers=SWEEP_CONFIG['num_workers'],
             lr_scheduler_name="cosineannealingwarmup",
             lr_warm_up_steps=SWEEP_CONFIG['lr_warm_up_steps'],
+            n_validation_runs=SWEEP_CONFIG['n_validation_runs'],
             n_batches_in_buffer=SWEEP_CONFIG['n_batches_in_buffer'],
             initialization_method="encoder_transpose_decoder",
             normalize_activations=SWEEP_CONFIG['normalize_activations'],
@@ -220,7 +232,9 @@ def train_single_config(dataset_name, layer_idx, expansion_factor, l1_coeff, lr,
         run_config.dataset_size = len(train_dataset)
 
         # Set up save directory
-        save_dir = Path(f"data/sae_sweep/{dataset_name}/layer_{layer_idx}/exp{expansion_factor}_l1{l1_coeff}_lr{lr}")
+        save_dir = Path(
+            f"data/sae_sweep/{dataset_name}/layer_{layer_idx}/exp{expansion_factor}_l1{l1_coeff}_lr{lr}_ep{num_epochs}"
+        )
         save_dir.mkdir(parents=True, exist_ok=True)
         run_config.checkpoint_path = str(save_dir)
 
@@ -232,11 +246,11 @@ def train_single_config(dataset_name, layer_idx, expansion_factor, l1_coeff, lr,
                     'expansion_factor': expansion_factor,
                     'l1_coefficient': l1_coeff,
                     'lr': lr,
+                    'epochs': num_epochs,
                     'layer': layer_idx,
                     'dataset': dataset_name,
-                    'epochs': SWEEP_CONFIG['epochs'],
                 },
-                name=f"exp{expansion_factor}_l1-{l1_coeff}_lr{lr}_l{layer_idx}",
+                name=f"exp{expansion_factor}_l1-{l1_coeff}_lr{lr}_ep{num_epochs}_l{layer_idx}",
                 reinit=True
             )
 
@@ -251,11 +265,15 @@ def train_single_config(dataset_name, layer_idx, expansion_factor, l1_coeff, lr,
             'expansion_factor': expansion_factor,
             'l1_coefficient': l1_coeff,
             'lr': lr,
+            'epochs': num_epochs,
             'layer': layer_idx,
             'explained_variance': run_summary.get('metrics/explained_variance', 0),
             'mse_loss': run_summary.get('losses/mse_loss', 0),
             'dead_features': run_summary.get('sparsity/dead_features', 0),
             'l0': run_summary.get('metrics/l0', 0),
+            'val_explained_variance': run_summary.get('validation_metrics/explained_variance'),
+            'val_mse_loss': run_summary.get('validation_metrics/mse_loss'),
+            'val_l0': run_summary.get('validation_metrics/L0'),
         }
 
         # Save metrics
@@ -283,21 +301,61 @@ def train_single_config(dataset_name, layer_idx, expansion_factor, l1_coeff, lr,
         _gpu_cleanup()
 
 
+def _print_best_summary(results_by_layer):
+    """Print best config per layer and overall from results_by_layer."""
+    if not results_by_layer:
+        return
+
+    print(f"\n{'='*60}")
+    print("BEST CONFIGURATIONS PER LAYER:")
+    print(f"{'='*60}")
+
+    overall_best = None
+    overall_best_variance = -float('inf')
+
+    for layer_idx in sorted(results_by_layer.keys()):
+        layer_results = results_by_layer[layer_idx]
+        if not layer_results:
+            continue
+
+        best = max(layer_results, key=lambda x: x['explained_variance'])
+        print(f"\nLayer {layer_idx}:")
+        print(f"  Expansion Factor: {best['expansion_factor']}")
+        print(f"  L1 Coefficient: {best['l1_coefficient']}")
+        print(f"  Learning Rate: {best['lr']}")
+        print(f"  Epochs: {best['epochs']}")
+        print(f"  Explained Variance: {best['explained_variance']:.4f}")
+
+        if best['explained_variance'] > overall_best_variance:
+            overall_best = best
+            overall_best_variance = best['explained_variance']
+
+    if overall_best:
+        print(f"\n{'='*60}")
+        print("OVERALL BEST CONFIGURATION:")
+        print(f"Layer: {overall_best['layer']}")
+        print(f"Expansion Factor: {overall_best['expansion_factor']}")
+        print(f"L1 Coefficient: {overall_best['l1_coefficient']}")
+        print(f"Learning Rate: {overall_best['lr']}")
+        print(f"Epochs: {overall_best['epochs']}")
+        print(f"Explained Variance: {overall_best['explained_variance']:.4f}")
+        print(f"{'='*60}")
+
+
 def main():
-    """Run the hyperparameter sweep across all layers."""
+    """Run a single sweep across selected layers."""
 
     dataset_name = SWEEP_CONFIG['dataset']
     layers = SWEEP_CONFIG['layers']
 
-    # Generate all combinations of hyperparameters and layers
     hyperparams = list(
         itertools.product(
             SWEEP_CONFIG['expansion_factors'],
             SWEEP_CONFIG['l1_coefficients'],
             SWEEP_CONFIG['learning_rates'],
+            SWEEP_CONFIG['epoch_values'],
         )
     )
-
     all_configs = list(itertools.product(layers, hyperparams))
 
     print(f"Running sweep with {len(all_configs)} total configurations")
@@ -305,8 +363,7 @@ def main():
     print(f"Layers: {layers}")
     print(f"Hyperparameter combinations per layer: {len(hyperparams)}")
 
-    all_results = {}  # Store results by layer
-
+    all_results = {}
     hooked_model = None
     train_dataset = None
     val_dataset = None
@@ -315,37 +372,32 @@ def main():
         print("Loading shared model and datasets once for the full sweep...")
         hooked_model, train_dataset, val_dataset = _load_shared_resources(dataset_name)
 
-        for i, (layer_idx, (exp_factor, l1_coeff, lr)) in enumerate(all_configs, 1):
+        for i, (layer_idx, (exp_factor, l1_coeff, lr, num_epochs)) in enumerate(all_configs, 1):
             print(
                 f"\n[{i}/{len(all_configs)}] Running Layer {layer_idx} "
-                f"with exp_factor={exp_factor}, l1={l1_coeff}, lr={lr}"
+                f"with exp_factor={exp_factor}, l1={l1_coeff}, lr={lr}, epochs={num_epochs}"
             )
 
             metrics = train_single_config(
-                dataset_name,
-                layer_idx,
-                exp_factor,
-                l1_coeff,
-                lr,
+                dataset_name=dataset_name,
+                layer_idx=layer_idx,
+                expansion_factor=exp_factor,
+                l1_coeff=l1_coeff,
+                lr=lr,
+                num_epochs=num_epochs,
                 hooked_model=hooked_model,
                 train_dataset=train_dataset,
                 val_dataset=val_dataset,
             )
 
-            if metrics:
-                # Initialize layer results list if needed
-                if layer_idx not in all_results:
-                    all_results[layer_idx] = []
+            if not metrics:
+                continue
 
-                all_results[layer_idx].append(metrics)
-
-                # Save intermediate results for this layer
-                with open(f'sweep_results_{dataset_name}_layer{layer_idx}.json', 'w') as f:
-                    json.dump(all_results[layer_idx], f, indent=2)
-
-                # Also save combined results
-                with open(f'sweep_results_{dataset_name}_all_layers.json', 'w') as f:
-                    json.dump(all_results, f, indent=2)
+            all_results.setdefault(layer_idx, []).append(metrics)
+            with open(f'sweep_results_{dataset_name}_layer{layer_idx}.json', 'w') as f:
+                json.dump(all_results[layer_idx], f, indent=2)
+            with open(f'sweep_results_{dataset_name}_all_layers.json', 'w') as f:
+                json.dump(all_results, f, indent=2)
     finally:
         # End-of-sweep cleanup.
         _clear_model_hooks(hooked_model)
@@ -355,40 +407,7 @@ def main():
         del hooked_model
         _gpu_cleanup()
 
-    # Find best configuration per layer and overall
-    if all_results:
-        print(f"\n{'='*60}")
-        print(f"BEST CONFIGURATIONS PER LAYER:")
-        print(f"{'='*60}")
-
-        overall_best = None
-        overall_best_variance = -float('inf')
-
-        for layer_idx in sorted(all_results.keys()):
-            layer_results = all_results[layer_idx]
-            if layer_results:
-                best = max(layer_results, key=lambda x: x['explained_variance'])
-                print(f"\nLayer {layer_idx}:")
-                print(f"  Expansion Factor: {best['expansion_factor']}")
-                print(f"  L1 Coefficient: {best['l1_coefficient']}")
-                print(f"  Learning Rate: {best['lr']}")
-                print(f"  Explained Variance: {best['explained_variance']:.4f}")
-
-                # Track overall best
-                if best['explained_variance'] > overall_best_variance:
-                    overall_best = best
-                    overall_best_variance = best['explained_variance']
-
-        if overall_best:
-            print(f"\n{'='*60}")
-            print(f"OVERALL BEST CONFIGURATION:")
-            print(f"Layer: {overall_best['layer']}")
-            print(f"Expansion Factor: {overall_best['expansion_factor']}")
-            print(f"L1 Coefficient: {overall_best['l1_coefficient']}")
-            print(f"Learning Rate: {overall_best['lr']}")
-            print(f"Explained Variance: {overall_best['explained_variance']:.4f}")
-            print(f"{'='*60}")
-
+    _print_best_summary(all_results)
     return all_results
 
 
