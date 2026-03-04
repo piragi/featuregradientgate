@@ -10,13 +10,20 @@ Script usage:
 import json
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
 
 warnings.filterwarnings('ignore')
+
+
+METRIC_JSON_KEYS = {
+    'saco': 'SaCo',
+    'faithfulness_correlation': 'FaithfulnessCorrelation',
+    'pixelflipping': 'PixelFlipping',
+}
 
 
 def _discover_default_sweep_dirs(base_dir: Path = Path("data/runs")) -> List[str]:
@@ -69,10 +76,84 @@ def _validate_sweep_dirs(sweep_dirs: List[str]) -> List[Path]:
     return resolved
 
 
+def _find_faithfulness_stats_file(experiment_path: Path) -> Optional[Path]:
+    """Find the latest faithfulness stats JSON under an experiment directory."""
+    candidates = sorted(experiment_path.rglob("faithfulness_stats_*.json"))
+    return candidates[-1] if candidates else None
+
+
+def _load_metric_scores_by_filename(
+    faithfulness_stats_path: Path, metric_json_key: str,
+) -> Optional[Dict[str, float]]:
+    """Load per-image metric scores keyed by filename from faithfulness stats."""
+    try:
+        with open(faithfulness_stats_path) as f:
+            payload = json.load(f)
+    except Exception:
+        return None
+
+    metrics = payload.get('metrics', {})
+    metric_block = metrics.get(metric_json_key, {})
+    scores = metric_block.get('mean_scores')
+    images = payload.get('images')
+
+    if not isinstance(scores, list) or not isinstance(images, list):
+        return None
+    if len(scores) != len(images):
+        return None
+
+    score_map: Dict[str, float] = {}
+    for image_info, score in zip(images, scores):
+        if not isinstance(image_info, dict):
+            continue
+        filename = image_info.get('filename')
+        if filename is None:
+            continue
+        score_map[str(filename)] = float(score)
+
+    return score_map if score_map else None
+
+
+def _compute_paired_differences(
+    treatment_stats_path: Optional[str],
+    vanilla_stats_path: Optional[str],
+    metric: str,
+) -> Optional[np.ndarray]:
+    """Return paired per-image differences if both stats files are available.
+
+    Difference sign convention:
+      - SaCo/Faithfulness: treatment - vanilla (higher is better)
+      - PixelFlipping: vanilla - treatment (lower is better)
+    """
+    if not treatment_stats_path or not vanilla_stats_path:
+        return None
+
+    metric_key = METRIC_JSON_KEYS.get(metric)
+    if metric_key is None:
+        return None
+
+    treatment_scores = _load_metric_scores_by_filename(Path(treatment_stats_path), metric_key)
+    vanilla_scores = _load_metric_scores_by_filename(Path(vanilla_stats_path), metric_key)
+    if treatment_scores is None or vanilla_scores is None:
+        return None
+
+    common_files = sorted(set(treatment_scores) & set(vanilla_scores))
+    if len(common_files) < 2:
+        return None
+
+    if metric == 'pixelflipping':
+        diffs = np.array([vanilla_scores[f] - treatment_scores[f] for f in common_files], dtype=float)
+    else:
+        diffs = np.array([treatment_scores[f] - vanilla_scores[f] for f in common_files], dtype=float)
+
+    return diffs
+
+
 def load_experiment_data(experiment_path: Path) -> Dict[str, Any]:
     """Load results and config for a single experiment."""
     results_file = experiment_path / "results.json"
     config_file = experiment_path / "experiment_config.json"
+    faithfulness_stats_file = _find_faithfulness_stats_file(experiment_path)
 
     with open(results_file) as f:
         results = json.load(f)
@@ -80,7 +161,12 @@ def load_experiment_data(experiment_path: Path) -> Dict[str, Any]:
     with open(config_file) as f:
         config = json.load(f)
 
-    return {'results': results, 'config': config, 'experiment_name': experiment_path.name}
+    return {
+        'results': results,
+        'config': config,
+        'experiment_name': experiment_path.name,
+        'faithfulness_stats_path': str(faithfulness_stats_file) if faithfulness_stats_file else None,
+    }
 
 
 def extract_metrics(data: Dict[str, Any]) -> Dict[str, float]:
@@ -145,7 +231,11 @@ def load_all_experiments(sweep_dirs: List[str]) -> Tuple[pd.DataFrame, pd.DataFr
                             info = get_experiment_info(data)
 
                             # Add experiment path info for identification
-                            combined = {**metrics, **info, 'experiment_path': str(exp_dir)}
+                            combined = {
+                                **metrics, **info,
+                                'experiment_path': str(exp_dir),
+                                'faithfulness_stats_path': data.get('faithfulness_stats_path'),
+                            }
 
                             # Separate vanilla from treatment experiments
                             if exp_dir.name == 'vanilla':
@@ -248,6 +338,41 @@ def calculate_statistical_comparison(sweep_df: pd.DataFrame, vanilla_df: pd.Data
                     ci_lower = (treatment_mean - vanilla_mean) - critical_t * se_diff
                     ci_upper = (treatment_mean - vanilla_mean) + critical_t * se_diff
 
+                stat_test = "welch_approx"
+                n_pairs = np.nan
+
+                # Prefer paired image-level significance when per-image scores are available.
+                paired_diffs = _compute_paired_differences(
+                    treatment_row.get('faithfulness_stats_path'),
+                    vanilla_row.get('faithfulness_stats_path'),
+                    metric,
+                )
+                if paired_diffs is not None:
+                    n_pairs = int(paired_diffs.shape[0])
+                    difference = float(np.mean(paired_diffs))
+                    diff_std = float(np.std(paired_diffs, ddof=1))
+                    se_diff = diff_std / np.sqrt(n_pairs) if n_pairs > 1 else 0.0
+
+                    if metric == 'pixelflipping':
+                        percent_improvement = (difference / vanilla_mean * 100) if vanilla_mean != 0 else 0
+                    else:
+                        percent_improvement = (difference / vanilla_mean * 100) if vanilla_mean != 0 else 0
+
+                    if n_pairs > 1 and se_diff > 0:
+                        t_stat = difference / se_diff
+                        p_value = 2 * stats.t.sf(abs(t_stat), df=n_pairs - 1)
+                        critical_t = stats.t.ppf(0.975, n_pairs - 1)
+                        ci_lower = difference - critical_t * se_diff
+                        ci_upper = difference + critical_t * se_diff
+                    else:
+                        p_value = 1.0
+                        ci_lower = difference
+                        ci_upper = difference
+
+                    # Paired standardized effect size (Cohen's dz)
+                    cohens_d_value = (difference / diff_std) if diff_std > 0 else 0
+                    stat_test = "paired_t"
+
                 comparison.update({
                     f'{metric}_treatment_mean': treatment_mean,
                     f'{metric}_treatment_std': treatment_std,
@@ -261,7 +386,9 @@ def calculate_statistical_comparison(sweep_df: pd.DataFrame, vanilla_df: pd.Data
                     f'{metric}_p_value': p_value,
                     f'{metric}_ci_lower': ci_lower,
                     f'{metric}_ci_upper': ci_upper,
-                    f'{metric}_significant': p_value < 0.05
+                    f'{metric}_significant': p_value < 0.05,
+                    f'{metric}_stat_test': stat_test,
+                    f'{metric}_n_pairs': n_pairs,
                 })
 
             comparisons.append(comparison)
@@ -604,7 +731,11 @@ def main(sweep_dirs: List[str]):
 
 if __name__ == "__main__":
     # Config-first runner: edit this list if you want explicit sweep folders.
-    sweep_dirs = _discover_default_sweep_dirs()
+    # sweep_dirs = _discover_default_sweep_dirs()
+    sweep_dirs = [
+        "data/runs/feature_gradient_sweep_20260304_125536",
+        "data/runs/feature_gradient_sweep_20260304_130827",
+    ]
     if not sweep_dirs:
         raise FileNotFoundError(
             "No default sweep directories found under data/runs/.\n"

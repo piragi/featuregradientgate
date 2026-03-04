@@ -157,7 +157,7 @@ class FaithfulnessConfig:
     # === SaCo (binned attribution analysis) parameters ===
     n_bins: int = 49  # Number of attribution bins (for B-16 models with 196 patches)
     n_bins_b32: int = 13  # Number of attribution bins (for B-32 models with 49 patches)
-    saco_inference_batch_size: int = 32  # Batch size for model inference during SaCo perturbation
+    saco_inference_batch_size: int = 64  # Batch size for model inference during SaCo perturbation
 
     # === Perturbation settings (shared across all metrics) ===
     perturb_baseline: str = "mean"  # Baseline for perturbation ("black", "white", "mean", etc.)

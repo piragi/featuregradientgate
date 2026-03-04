@@ -57,6 +57,7 @@ class SweepConfig:
     subset_size: Optional[int] = None
     random_seed: int = 42
     run_baselines: bool = False
+    include_vanilla: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -152,8 +153,9 @@ def _build_experiment_grid(
     clamp_max_values: List[float],
     alpha_values: List[float],
     run_baselines: bool = False,
+    include_vanilla: bool = True,
 ) -> List[Tuple[str, Dict[str, Any]]]:
-    """Generate the full experiment list: baselines + vanilla + all gated combinations.
+    """Generate the full experiment list: optional baselines/vanilla + gated combinations.
 
     The first entries are attribution baselines (rollout, gradcam) when enabled,
     followed by the vanilla baseline (``enable_feature_gradients=False``).
@@ -177,19 +179,24 @@ def _build_experiment_grid(
                 'attribution_method': method,
             }))
 
-    # Vanilla baseline — ungated TransLRP attribution (always first)
-    experiments.append(("vanilla", {
-        'use_feature_gradients': False,
-        'feature_gradient_layers': [],
-        'kappa': 0,
-        'gate_construction': 'combined',
-        'shuffle_decoder': False,
-        'alpha': 1.0,
-    }))
+    if include_vanilla:
+        # Vanilla baseline — ungated TransLRP attribution
+        experiments.append(("vanilla", {
+            'use_feature_gradients': False,
+            'feature_gradient_layers': [],
+            'kappa': 0,
+            'gate_construction': 'combined',
+            'shuffle_decoder': False,
+            'alpha': 1.0,
+        }))
 
     for layers, kappa, gate_construction, shuffle_decoder, clamp_max, alpha in product(
         layer_combinations, kappa_values, gate_constructions, shuffle_decoder_options, clamp_max_values, alpha_values
     ):
+        # Decoder shuffling is only meaningful for SAE-gated ("combined") runs.
+        if shuffle_decoder and gate_construction != "combined":
+            continue
+
         layers_str = '_'.join(map(str, layers))
         shuffle_suffix = "_shuffled" if shuffle_decoder else ""
         exp_name = (
@@ -235,13 +242,12 @@ def _build_imagenet_clip_prompts() -> List[str]:
 
 def _load_dataset_resources(
     dataset_name: str,
-    layer_combinations: List[List[int]],
     device: torch.device,
-) -> Tuple[torch.nn.Module, Optional[Any], Dict[int, Dict[str, Any]]]:
+) -> Tuple[torch.nn.Module, Optional[Any]]:
     """Load model, CLIP classifier, and SAE resources for one dataset.
 
     Returns:
-        (model, clip_classifier, steering_resources)
+        (model, clip_classifier)
     """
     dataset_cfg = get_dataset_config(dataset_name)
 
@@ -256,14 +262,21 @@ def _load_dataset_resources(
     model, clip_classifier = load_model_for_dataset(dataset_cfg, device, temp_config)
     model = model.to(device)
 
-    all_layers_needed = set()
-    for layers in layer_combinations:
-        all_layers_needed.update(layers)
+    return model, clip_classifier
 
-    print(f"Loading SAE resources for layers: {sorted(all_layers_needed)}")
-    steering_resources = load_steering_resources(list(all_layers_needed), dataset_name=dataset_name)
 
-    return model, clip_classifier, steering_resources
+def _release_steering_resources(
+    steering_resources: Dict[int, Dict[str, Any]],
+) -> None:
+    """Move SAE resources to CPU and free GPU memory."""
+    for resources in steering_resources.values():
+        sae = resources.get('sae')
+        if sae is not None and hasattr(sae, 'to'):
+            sae.to("cpu")
+        if 'sae' in resources:
+            del resources['sae']
+    steering_resources.clear()
+    _gpu_cleanup(aggressive=True)
 
 
 def _release_dataset_resources(
@@ -286,11 +299,7 @@ def _release_dataset_resources(
             del clip_classifier.text_model
         del clip_classifier
 
-    for layer_idx, resources in steering_resources.items():
-        if 'sae' in resources:
-            if hasattr(resources['sae'], 'to'):
-                resources['sae'].to("cpu")
-            del resources['sae']
+    _release_steering_resources(steering_resources)
     del steering_resources
 
     _gpu_cleanup(aggressive=True)
@@ -408,6 +417,7 @@ def run_parameter_sweep(
     subset_size: Optional[int] = None,
     random_seed: int = 42,
     run_baselines: bool = False,
+    include_vanilla: bool = True,
 ) -> Dict[str, List[Dict]]:
     """
     Run a parameter sweep comparing vanilla TransLRP with feature gradient gating.
@@ -425,6 +435,7 @@ def run_parameter_sweep(
         output_base_dir: Base directory for output (auto-generated if None)
         subset_size: Number of images per dataset (None for all)
         random_seed: Random seed for reproducibility
+        include_vanilla: Whether to include ungated TransLRP run
 
     Returns:
         Dictionary mapping dataset names to lists of experiment results
@@ -446,6 +457,8 @@ def run_parameter_sweep(
         'debug_mode': debug_mode,
         'subset_size': subset_size,
         'random_seed': random_seed,
+        'run_baselines': run_baselines,
+        'include_vanilla': include_vanilla,
         'timestamp': datetime.now().isoformat()
     }
     with open(output_base_dir / 'sweep_config.json', 'w') as f:
@@ -453,7 +466,7 @@ def run_parameter_sweep(
 
     experiments = _build_experiment_grid(
         layer_combinations, kappa_values, gate_constructions,
-        shuffle_decoder_options, clamp_max_values, alpha_values, run_baselines,
+        shuffle_decoder_options, clamp_max_values, alpha_values, run_baselines, include_vanilla,
     )
 
     all_results = {}
@@ -465,14 +478,32 @@ def run_parameter_sweep(
         print(f"{'='*60}")
         _print_gpu_memory("initial")
 
-        model, clip_classifier, steering_resources = _load_dataset_resources(
-            dataset_name, layer_combinations, device,
-        )
+        model, clip_classifier = _load_dataset_resources(dataset_name, device)
+        steering_resources: Dict[int, Dict[str, Any]] = {}
+        loaded_layers: Tuple[int, ...] = tuple()
 
         dataset_results = []
 
         for exp_name, exp_params in experiments:
             print(f"\nRunning {exp_name}...")
+
+            required_layers = tuple(sorted(exp_params.get('feature_gradient_layers', []))) \
+                if exp_params.get('use_feature_gradients', False) else tuple()
+
+            if required_layers != loaded_layers:
+                if steering_resources:
+                    print(f"Releasing SAE resources for layers: {list(loaded_layers)}")
+                    _release_steering_resources(steering_resources)
+
+                if required_layers:
+                    print(f"Loading SAE resources for layers: {list(required_layers)}")
+                    steering_resources = load_steering_resources(
+                        list(required_layers), dataset_name=dataset_name,
+                    )
+                else:
+                    steering_resources = {}
+
+                loaded_layers = required_layers
 
             exp_dir = output_base_dir / dataset_name / exp_name
             result = run_single_experiment(
@@ -514,20 +545,21 @@ def main():
 
     cfg = SweepConfig(
         datasets=[
-            ("hyperkvasir", Path("./data/hyperkvasir/labeled-images/")),
-            # ("imagenet", Path("./data/imagenet/raw")),
-            ("covidquex", Path("./data/covidquex/data/lung/")),
+            ("imagenet", Path("./data/imagenet/raw")),
         ],
-        current_mode="val",
-        gate_constructions=["combined"],
-        layer_combinations=[[2], [3], [4], [5], [6], [7], [8], [9], [10]],
-        clamp_max_values=[5.0, 10.0, 20.0],
-        alpha_values=[0.5, 1.0, 2.0],
-        subset_size=500,
+        current_mode="test",
+        gate_constructions=["combined", "no_SAE"],
+        layer_combinations=[
+            [3, 4, 9],
+        ],
+        clamp_max_values=[5.,],
+        alpha_values=[1.0],
+        subset_size=None,
         random_seed=123,
-        shuffle_decoder_options=[False],
+        shuffle_decoder_options=[False, True],
         run_baselines=True,
-        debug_mode=True,
+        include_vanilla=True,
+        debug_mode=False,
     )
 
     results = run_parameter_sweep(**asdict(cfg))

@@ -417,6 +417,3 @@ def _print_faithfulness_summary(metrics):
         print(f"  Median: {overall['median']:.4f}")
         print(f"  Count: {overall['count']}")
         print(f"  Avg trial std: {overall['avg_trial_std']:.4f}")
-
-
-
