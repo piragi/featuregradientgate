@@ -87,7 +87,6 @@ class BoostingConfig:
     # Feature gradient gating
     enable_feature_gradients: bool = False  # Enable feature gradient gating
     feature_gradient_layers: List[int] = field(default_factory=lambda: [9, 10])  # Which layers to apply
-    kappa: float = 10.0  # Sweep metadata only — not used in gate formula (kept for experiment naming)
     clamp_min: float = 0.1  # Minimum gate value (1/clamp_max)
     clamp_max: float = 10.0  # Base for exponential gate mapping: gate = clamp_max^(tanh(s_norm))
     alpha: float = 1.0  # Tanh steepness: gate = clamp_max^(tanh(alpha * s_norm))

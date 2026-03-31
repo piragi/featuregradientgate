@@ -202,7 +202,6 @@ def get_experiment_info(data: Dict[str, Any]) -> Dict[str, Any]:
         'gate_construction': config['experiment_params']['gate_construction'],
         'use_feature_gradients': config['experiment_params']['use_feature_gradients'],
         'feature_gradient_layers': config['experiment_params'].get('feature_gradient_layers', []),
-        'kappa': config['experiment_params']['kappa'],
         'experiment_name': data['experiment_name']
     }
 
@@ -286,7 +285,6 @@ def calculate_statistical_comparison(sweep_df: pd.DataFrame, vanilla_df: pd.Data
                 'experiment_config': treatment_row['experiment_name'],
                 'gate_construction': treatment_row['gate_construction'],
                 'use_feature_gradients': treatment_row['use_feature_gradients'],
-                'kappa': treatment_row['kappa'],
                 'experiment_path': treatment_row['experiment_path']
             }
 
@@ -428,7 +426,6 @@ def print_detailed_results(comparison_df: pd.DataFrame):
             print(f"\nConfiguration: {row['experiment_config']}")
             print(f"Gate Construction: {row['gate_construction']}")
             print(f"Feature Gradients: {row['use_feature_gradients']}")
-            print(f"Kappa: {row['kappa']}")
             print(f"Path: {row['experiment_path']}")
             print("-" * 60)
 
@@ -617,7 +614,6 @@ def identify_best_overall_performers(comparison_df: pd.DataFrame, sweep_df: pd.D
                 print(f"\n    #{rank}:")
                 print(f"      Configuration: {best_single['experiment_config']}")
                 print(f"      Method: {best_single['gate_construction']}")
-                print(f"      Kappa: {best_single['kappa']}")
                 print(f"      Composite Improvement: {best_single['composite_improvement']:.2f}%")
                 print(f"      Individual Improvements:")
                 _print_metric_improvements(best_single)
@@ -633,7 +629,6 @@ def identify_best_overall_performers(comparison_df: pd.DataFrame, sweep_df: pd.D
                 print(f"\n    #{rank}:")
                 print(f"      Configuration: {best_multi['experiment_config']}")
                 print(f"      Method: {best_multi['gate_construction']}")
-                print(f"      Kappa: {best_multi['kappa']}")
                 print(f"      Composite Improvement: {best_multi['composite_improvement']:.2f}%")
                 print(f"      Individual Improvements:")
                 _print_metric_improvements(best_multi)
@@ -653,7 +648,6 @@ def identify_best_overall_performers(comparison_df: pd.DataFrame, sweep_df: pd.D
                     for rank, (_, best_method) in enumerate(top_method.iterrows(), 1):
                         print(f"\n      #{rank}:")
                         print(f"        Configuration: {best_method['experiment_config']}")
-                        print(f"        Kappa: {best_method['kappa']}")
                         print(f"        Composite Improvement: {best_method['composite_improvement']:.2f}%")
                         print(f"        Individual Improvements:")
                         _print_metric_improvements(best_method, indent="          ")
@@ -730,17 +724,12 @@ def main(sweep_dirs: List[str]):
 
 
 if __name__ == "__main__":
-    # Config-first runner: edit this list if you want explicit sweep folders.
-    # sweep_dirs = _discover_default_sweep_dirs()
-    sweep_dirs = [
-        "data/runs/feature_gradient_sweep_20260304_125536",
-        "data/runs/feature_gradient_sweep_20260304_130827",
-    ]
+    sweep_dirs = _discover_default_sweep_dirs()[:1]
     if not sweep_dirs:
         raise FileNotFoundError(
-            "No default sweep directories found under data/runs/.\n"
-            "Run `uv run python -m featuregating.experiments.sweep` first, or edit "
-            "`sweep_dirs` in featuregating/experiments/comparison.py."
+            "No sweep directories found under data/runs/.\n"
+            "Run a sweep first or specify a path in "
+            "featuregating/experiments/comparison.py."
         )
 
     print(f"Analyzing sweep directories: {sweep_dirs}\n")

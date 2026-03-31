@@ -46,7 +46,6 @@ class SweepConfig:
     """
     datasets: List[Tuple[str, Path]]
     layer_combinations: List[List[int]]
-    kappa_values: List[float] = field(default_factory=lambda: [0.5])
     gate_constructions: List[str] = field(default_factory=lambda: ["combined"])
     shuffle_decoder_options: List[bool] = field(default_factory=lambda: [False])
     clamp_max_values: List[float] = field(default_factory=lambda: [10.0])
@@ -136,7 +135,6 @@ def _configure_boosting(pipeline_config: config.PipelineConfig, experiment_param
     boosting = pipeline_config.classify.boosting
     boosting.enable_feature_gradients = experiment_params['use_feature_gradients']
     boosting.feature_gradient_layers = experiment_params.get('feature_gradient_layers', [])
-    boosting.kappa = experiment_params.get('kappa', 50.0)
     boosting.gate_construction = experiment_params.get('gate_construction', 'combined')
     boosting.shuffle_decoder = experiment_params.get('shuffle_decoder', False)
     boosting.clamp_max = experiment_params.get('clamp_max', boosting.clamp_max)
@@ -147,7 +145,6 @@ def _configure_boosting(pipeline_config: config.PipelineConfig, experiment_param
 
 def _build_experiment_grid(
     layer_combinations: List[List[int]],
-    kappa_values: List[float],
     gate_constructions: List[str],
     shuffle_decoder_options: List[bool],
     clamp_max_values: List[float],
@@ -172,7 +169,6 @@ def _build_experiment_grid(
             experiments.append((method, {
                 'use_feature_gradients': False,
                 'feature_gradient_layers': [],
-                'kappa': 0,
                 'gate_construction': 'combined',
                 'shuffle_decoder': False,
                 'alpha': 1.0,
@@ -184,14 +180,13 @@ def _build_experiment_grid(
         experiments.append(("vanilla", {
             'use_feature_gradients': False,
             'feature_gradient_layers': [],
-            'kappa': 0,
             'gate_construction': 'combined',
             'shuffle_decoder': False,
             'alpha': 1.0,
         }))
 
-    for layers, kappa, gate_construction, shuffle_decoder, clamp_max, alpha in product(
-        layer_combinations, kappa_values, gate_constructions, shuffle_decoder_options, clamp_max_values, alpha_values
+    for layers, gate_construction, shuffle_decoder, clamp_max, alpha in product(
+        layer_combinations, gate_constructions, shuffle_decoder_options, clamp_max_values, alpha_values
     ):
         # Decoder shuffling is only meaningful for SAE-gated ("combined") runs.
         if shuffle_decoder and gate_construction != "combined":
@@ -200,14 +195,13 @@ def _build_experiment_grid(
         layers_str = '_'.join(map(str, layers))
         shuffle_suffix = "_shuffled" if shuffle_decoder else ""
         exp_name = (
-            f"layers_{layers_str}_kappa_{kappa}_{gate_construction}"
+            f"layers_{layers_str}_{gate_construction}"
             f"_clamp_{clamp_max}_alpha_{alpha}{shuffle_suffix}"
         )
 
         experiments.append((exp_name, {
             'use_feature_gradients': True,
             'feature_gradient_layers': layers,
-            'kappa': kappa,
             'gate_construction': gate_construction,
             'shuffle_decoder': shuffle_decoder,
             'clamp_max': clamp_max,
@@ -342,7 +336,6 @@ def run_single_experiment(
         experiment_params: Dictionary containing:
             - use_feature_gradients: bool
             - feature_gradient_layers: List[int]
-            - kappa: float (gating strength parameter)
             - gate_construction: str ("activation_only", "gradient_only", or "combined")
             - shuffle_decoder: bool (whether to shuffle decoder columns)
             - clamp_max: float (maximum gate value, range: [1/clamp_max, clamp_max])
@@ -406,7 +399,6 @@ def run_single_experiment(
 def run_parameter_sweep(
     datasets: List[Tuple[str, Path]],
     layer_combinations: List[List[int]],
-    kappa_values: List[float],
     gate_constructions: List[str] = ["combined"],
     shuffle_decoder_options: List[bool] = [False],
     clamp_max_values: List[float] = [5.0],
@@ -425,7 +417,6 @@ def run_parameter_sweep(
     Args:
         datasets: List of (dataset_name, source_path) tuples
         layer_combinations: List of layer combinations to test (e.g., [[4], [9], [4,9]])
-        kappa_values: List of kappa values to test (gating strength)
         gate_constructions: List of gate construction types to test
         shuffle_decoder_options: List of shuffle decoder options (True/False)
         clamp_max_values: List of maximum gate values (gate range: [1/clamp_max, clamp_max])
@@ -448,7 +439,6 @@ def run_parameter_sweep(
     sweep_config = {
         'datasets': [d[0] for d in datasets],
         'layer_combinations': layer_combinations,
-        'kappa_values': kappa_values,
         'gate_constructions': gate_constructions,
         'shuffle_decoder_options': shuffle_decoder_options,
         'clamp_max_values': clamp_max_values,
@@ -465,7 +455,7 @@ def run_parameter_sweep(
         json.dump(sweep_config, f, indent=2)
 
     experiments = _build_experiment_grid(
-        layer_combinations, kappa_values, gate_constructions,
+        layer_combinations, gate_constructions,
         shuffle_decoder_options, clamp_max_values, alpha_values, run_baselines, include_vanilla,
     )
 
@@ -547,19 +537,19 @@ def main():
         datasets=[
             ("imagenet", Path("./data/imagenet/raw")),
         ],
-        current_mode="test",
+        current_mode="val",
         gate_constructions=["combined", "no_SAE"],
         layer_combinations=[
             [3, 4, 9],
         ],
         clamp_max_values=[5.,],
         alpha_values=[1.0],
-        subset_size=None,
+        subset_size=500,
         random_seed=123,
         shuffle_decoder_options=[False, True],
         run_baselines=True,
         include_vanilla=True,
-        debug_mode=False,
+        debug_mode=True,
     )
 
     results = run_parameter_sweep(**asdict(cfg))

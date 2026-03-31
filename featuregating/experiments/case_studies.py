@@ -19,7 +19,7 @@ import pandas as pd
 from PIL import Image
 
 def _discover_default_experiment(dataset: str) -> Tuple[Path, str]:
-    """Find a recent sweep directory and first non-vanilla config for ``dataset``."""
+    """Find a recent sweep directory and a suitable gated config for ``dataset``."""
     run_dirs = sorted(
         [p for p in Path("data/runs").glob("feature_gradient_sweep_*") if p.is_dir()],
         key=lambda p: p.name,
@@ -29,28 +29,52 @@ def _discover_default_experiment(dataset: str) -> Tuple[Path, str]:
         dataset_dir = run_dir / dataset
         if not dataset_dir.exists():
             continue
-        configs = sorted(
-            [p.name for p in dataset_dir.iterdir() if p.is_dir() and p.name != "vanilla"]
-        )
-        if configs:
-            return run_dir, configs[0]
+        configs = [p.name for p in dataset_dir.iterdir() if p.is_dir()]
+        gated_configs = [name for name in configs if name.startswith("layers_")]
+        if gated_configs:
+            gated_configs.sort(
+                key=lambda name: (
+                    0 if "_combined_" in name else 1,
+                    0 if "_shuffled" not in name else 1,
+                    name,
+                )
+            )
+            return run_dir, gated_configs[0]
 
     raise FileNotFoundError(
-        f"No suitable experiment found for dataset '{dataset}' under data/runs/.\n"
-        "Run a sweep first with `uv run python -m featuregating.experiments.sweep`."
+        f"No suitable gated experiment found for dataset '{dataset}' under data/runs/.\n"
+        "Run a sweep with debug outputs first."
     )
 
 
 def _infer_layers_from_experiment_name(experiment_config: str) -> List[int]:
-    """Infer layer list from names like ``layers_6_7_8_kappa_...``."""
-    match = re.match(r"^layers_([0-9_]+)_kappa_", experiment_config)
-    if not match:
+    """Infer layer list from names like ``layers_6_7_8_combined_...``."""
+    if not experiment_config.startswith("layers_"):
         return [3]
-    return [int(x) for x in match.group(1).split("_") if x.isdigit()]
+
+    layers: List[int] = []
+    for token in experiment_config[len("layers_"):].split("_"):
+        if token.isdigit():
+            layers.append(int(token))
+        else:
+            break
+
+    return layers or [3]
+
+
+def _resolve_experiment_artifact_dir(experiment_path: Path) -> Path:
+    """Resolve the split-specific artifact directory for one experiment."""
+    for split in ("val", "test", "dev", "train"):
+        split_path = experiment_path / split
+        if split_path.is_dir():
+            return split_path
+    return experiment_path
 
 
 def _validate_case_study_inputs(vanilla_path: Path, gated_path: Path, layers: List[int]) -> None:
     """Fail fast with actionable errors before heavy analysis work starts."""
+    vanilla_artifact_dir = _resolve_experiment_artifact_dir(vanilla_path)
+    gated_artifact_dir = _resolve_experiment_artifact_dir(gated_path)
     missing: List[str] = []
 
     if not vanilla_path.exists():
@@ -63,18 +87,18 @@ def _validate_case_study_inputs(vanilla_path: Path, gated_path: Path, layers: Li
             + "\n".join(f"  - {m}" for m in missing)
         )
 
-    if not list(vanilla_path.glob("faithfulness_stats_*.json")):
+    if not list(vanilla_artifact_dir.glob("faithfulness_stats_*.json")):
         raise FileNotFoundError(
-            f"Missing faithfulness JSON in {vanilla_path}.\n"
+            f"Missing faithfulness JSON in {vanilla_artifact_dir}.\n"
             "Expected file pattern: faithfulness_stats_*.json"
         )
-    if not list(gated_path.glob("faithfulness_stats_*.json")):
+    if not list(gated_artifact_dir.glob("faithfulness_stats_*.json")):
         raise FileNotFoundError(
-            f"Missing faithfulness JSON in {gated_path}.\n"
+            f"Missing faithfulness JSON in {gated_artifact_dir}.\n"
             "Expected file pattern: faithfulness_stats_*.json"
         )
 
-    debug_dir = gated_path / "debug"
+    debug_dir = gated_artifact_dir / "debug"
     if not debug_dir.exists():
         raise FileNotFoundError(
             f"Missing debug directory: {debug_dir}\n"
@@ -99,8 +123,8 @@ def _resolve_validation_activations_path(dataset: str, layers: List[int]) -> Pat
         dataset_name=dataset,
         layers=layers,
         split='val',
-        output_dir=Path(f"./data/sae_activations/{dataset}_val"),
-        subset_size=None,
+        output_dir=Path(f"./data/sae_activations/{dataset}_val_subset10000"),
+        subset_size=10000,
         use_clip=True,
     )
 
@@ -195,9 +219,10 @@ def load_faithfulness_results(path: Path) -> pd.DataFrame:
     per-image scores for all 3 metrics (SaCo, FaithfulnessCorrelation,
     PixelFlipping) and per-image classification metadata (``images`` array).
     """
-    faithfulness_json = list(path.glob("faithfulness_stats_*.json"))
+    artifact_dir = _resolve_experiment_artifact_dir(path)
+    faithfulness_json = list(artifact_dir.glob("faithfulness_stats_*.json"))
     if not faithfulness_json:
-        raise FileNotFoundError(f"No faithfulness stats JSON found in {path}")
+        raise FileNotFoundError(f"No faithfulness stats JSON found in {artifact_dir}")
 
     with open(faithfulness_json[0], 'r') as f:
         stats = json.load(f)
@@ -243,7 +268,7 @@ def load_debug_data(path: Path, layers: Optional[List[int]] = None) -> Dict[int,
     Expected NPZ keys (WP-18 format):
         patch_attribution_deltas, sparse_indices, sparse_activations, sparse_contributions
     """
-    debug_dir = path / "debug"
+    debug_dir = _resolve_experiment_artifact_dir(path) / "debug"
     if not debug_dir.exists():
         raise FileNotFoundError(f"Debug data directory not found: {debug_dir}")
 
@@ -420,7 +445,10 @@ def build_feature_activation_index(
 
 def compute_per_image_improvement(vanilla_df: pd.DataFrame, gated_df: pd.DataFrame) -> pd.DataFrame:
     """Compute composite improvement score from multiple metrics."""
-    improvements = gated_df[['image_idx']].copy()
+    base_cols = ['image_idx']
+    if 'filename' in gated_df.columns:
+        base_cols.append('filename')
+    improvements = gated_df[base_cols].copy()
 
     # Calculate deltas
     improvements['delta_saco'] = gated_df['saco_score'] - vanilla_df['saco_score']
@@ -569,10 +597,11 @@ def extract_case_studies(
     for _, img_row in top_images.iterrows():
         img_idx = img_row['image_idx']  # Actual image index (for file lookup)
         debug_idx = img_row['debug_idx']  # Index in debug data arrays
+        img_filename = img_row.get('filename')
 
         # Load attribution maps
-        vanilla_attr = load_attribution(img_idx, vanilla_attribution_dir)
-        gated_attr = load_attribution(img_idx, gated_attribution_dir)
+        vanilla_attr = load_attribution(img_filename, img_idx, vanilla_attribution_dir)
+        gated_attr = load_attribution(img_filename, img_idx, gated_attribution_dir)
 
         if vanilla_attr is None or gated_attr is None:
             print(f"  Warning: Skipping image {img_idx} - attribution maps not found")
@@ -585,6 +614,7 @@ def extract_case_studies(
         for feat_info in dominant_features:
             case_studies.append({
                 'image_idx': img_idx,
+                'filename': img_filename,
                 'debug_idx': debug_idx,
                 'composite_improvement': img_row['composite_improvement'],
                 'delta_saco': img_row['delta_saco'],
@@ -628,7 +658,7 @@ def _save_prototype_images(
             if proto_img_path is None:
                 continue
         else:
-            proto_img_path = get_image_path(proto_img_idx, prototype_image_dir)
+            proto_img_path = get_image_path(None, proto_img_idx, prototype_image_dir)
             if proto_img_path is None:
                 continue
 
@@ -720,13 +750,13 @@ def save_case_study_individual_images(
     case_dir.mkdir(parents=True, exist_ok=True)
 
     # Load image, attributions
-    image_path = get_image_path(img_idx, case_study_image_dir)
+    image_path = get_image_path(case.get('filename'), img_idx, case_study_image_dir)
     if not image_path or not image_path.exists():
         print(f"Warning: Image {img_idx} not found")
         return
 
-    vanilla_attr = load_attribution(img_idx, vanilla_attribution_dir)
-    gated_attr = load_attribution(img_idx, gated_attribution_dir)
+    vanilla_attr = load_attribution(case.get('filename'), img_idx, vanilla_attribution_dir)
+    gated_attr = load_attribution(case.get('filename'), img_idx, gated_attribution_dir)
     if vanilla_attr is None or gated_attr is None:
         print(f"Warning: Attributions not found for image {img_idx}")
         return
@@ -769,16 +799,26 @@ def save_case_study_individual_images(
     print(f"  Saved: {folder_name}/")
 
 
-def get_image_path(image_idx: int, image_dir: Path) -> Optional[Path]:
-    """Get image path for ImageNet dataset."""
-    image_path = image_dir / "class_-1" / f"img_-01_test_{image_idx:06d}.jpeg"
-    return image_path if image_path.exists() else None
+def get_image_path(filename: Optional[str], image_idx: int, image_dir: Path) -> Optional[Path]:
+    """Resolve image path from recorded filename first, then fall back to index-based lookup."""
+    if filename:
+        image_path = Path(filename)
+        if image_path.exists():
+            return image_path
+
+    matches = sorted(image_dir.glob(f"class_*/img_*_{image_idx:06d}.jpeg"))
+    return matches[0] if matches else None
 
 
-def load_attribution(image_idx: int, attribution_dir: Path) -> Optional[np.ndarray]:
-    """Load attribution map for ImageNet dataset."""
-    attr_path = attribution_dir / f"img_-01_test_{image_idx:06d}_attribution.npy"
-    return np.load(attr_path) if attr_path.exists() else None
+def load_attribution(filename: Optional[str], image_idx: int, attribution_dir: Path) -> Optional[np.ndarray]:
+    """Resolve attribution map from recorded filename first, then fall back to index-based lookup."""
+    if filename:
+        attr_path = attribution_dir / f"{Path(filename).stem}_attribution.npy"
+        if attr_path.exists():
+            return np.load(attr_path)
+
+    matches = sorted(attribution_dir.glob(f"img_*_{image_idx:06d}_attribution.npy"))
+    return np.load(matches[0]) if matches else None
 
 
 def _load_validation_prototype_mapping(activations_path: Path) -> Tuple[Dict[int, Path], Dict[int, int]]:
@@ -804,7 +844,10 @@ def _load_validation_prototype_mapping(activations_path: Path) -> Tuple[Dict[int
         )
 
     debug_to_path = {int(k): Path(v) for k, v in metadata['image_paths'].items()}
-    debug_to_image_idx = {idx: idx for idx in debug_to_path.keys()}
+    debug_to_image_idx = {}
+    for idx, path in debug_to_path.items():
+        match = re.search(r'_(\d+)\.(?:jpeg|png)$', path.name)
+        debug_to_image_idx[idx] = int(match.group(1)) if match else idx
     print(f"  Loaded mapping for {len(debug_to_path)} validation images from metadata")
     return debug_to_path, debug_to_image_idx
 
@@ -859,8 +902,8 @@ def run_case_study_analysis(
     print("=" * 80)
 
     # Set paths
-    vanilla_path = experiment_path / dataset / "vanilla" / "test"
-    gated_path = experiment_path / dataset / experiment_config / "test"
+    vanilla_path = experiment_path / dataset / "vanilla"
+    gated_path = experiment_path / dataset / experiment_config
     output_subdir = f"case_studies_{mode}" if mode == 'degraded' else "case_studies"
     output_dir = experiment_path / output_subdir / experiment_config
 
@@ -877,6 +920,9 @@ def run_case_study_analysis(
     print("Loading faithfulness results...")
     vanilla_faithfulness = load_faithfulness_results(vanilla_path)
     gated_faithfulness = load_faithfulness_results(gated_path)
+    vanilla_artifact_dir = _resolve_experiment_artifact_dir(vanilla_path)
+    gated_artifact_dir = _resolve_experiment_artifact_dir(gated_path)
+    artifact_split = gated_artifact_dir.name
 
     use_validation_prototypes = validation_activations_path is not None
 
@@ -885,12 +931,17 @@ def run_case_study_analysis(
     dataset_config = get_dataset_config(dataset)
 
     # Determine image directories
-    test_image_dir = Path(f"./data/prepared/{dataset}/test")
+    case_study_image_dir = Path(f"./data/prepared/{dataset}/{artifact_split}")
     val_image_dir = Path(f"./data/prepared/{dataset}/val")
 
-    # Create mapping from debug_idx to image_idx for test set
+    # Create mapping from debug_idx to image_idx for the analyzed split
     # The debug data is in processing order, same as faithfulness CSV rows
-    test_debug_to_image_idx = dict(enumerate(gated_faithfulness['image_idx'].tolist()))
+    split_debug_to_image_idx = dict(enumerate(gated_faithfulness['image_idx'].tolist()))
+    split_debug_to_path = None
+    if 'filename' in gated_faithfulness.columns:
+        split_debug_to_path = {
+            idx: Path(path) for idx, path in enumerate(gated_faithfulness['filename'].tolist()) if pd.notna(path)
+        }
 
     # Load validation prototype mapping if using validation prototypes
     if use_validation_prototypes:
@@ -931,15 +982,15 @@ def run_case_study_analysis(
             prototype_image_dir = val_image_dir
             prototype_paths = val_debug_to_path
         else:
-            feature_index = build_feature_activation_index(debug_data, layer_idx, source_name="test")
-            prototype_debug_to_image_idx = test_debug_to_image_idx
-            prototype_image_dir = test_image_dir
-            prototype_paths = None
+            feature_index = build_feature_activation_index(debug_data, layer_idx, source_name=artifact_split)
+            prototype_debug_to_image_idx = split_debug_to_image_idx
+            prototype_image_dir = case_study_image_dir
+            prototype_paths = split_debug_to_path
 
-        # Extract case studies (always from test set)
+        # Extract case studies from the selected sweep split
         case_studies = extract_case_studies(
             vanilla_faithfulness, gated_faithfulness, debug_data, layer_idx,
-            vanilla_path / "attributions", gated_path / "attributions",
+            vanilla_artifact_dir / "attributions", gated_artifact_dir / "attributions",
             n_top_images=n_top_images, n_patches_per_image=n_patches_per_image, mode=mode,
         )
         all_case_studies.append(case_studies)
@@ -954,8 +1005,8 @@ def run_case_study_analysis(
         for _, case in case_studies.head(n_case_visualizations).iterrows():
             save_case_study_individual_images(
                 case, feature_index, prototype_debug_to_image_idx, dataset_config,
-                test_image_dir, prototype_image_dir,
-                vanilla_path / "attributions", gated_path / "attributions",
+                case_study_image_dir, prototype_image_dir,
+                vanilla_artifact_dir / "attributions", gated_artifact_dir / "attributions",
                 layer_output_dir, patches_per_side, patch_size,
                 n_prototypes=n_prototypes, prototype_path_mapping=prototype_paths,
             )
@@ -990,17 +1041,21 @@ def main() -> None:
     dataset = "imagenet"
     experiment_path, experiment_config = _discover_default_experiment(dataset)
     layers = _infer_layers_from_experiment_name(experiment_config)
-
-    # Use validation set prototypes by default.
-    validation_activations_path = _resolve_validation_activations_path(dataset, layers)
+    vanilla_path = experiment_path / dataset / "vanilla"
+    gated_path = experiment_path / dataset / experiment_config
 
     print("Auto-selected experiment target:")
     print(f"  dataset:          {dataset}")
     print(f"  experiment_path:  {experiment_path}")
     print(f"  experiment_config:{experiment_config}")
     print(f"  layers:           {layers}")
-    print(f"  prototype source: validation ({validation_activations_path})")
+    print(f"  prototype source: validation")
     print()
+
+    _validate_case_study_inputs(vanilla_path, gated_path, layers)
+
+    # Use validation set prototypes by default.
+    validation_activations_path = _resolve_validation_activations_path(dataset, layers)
 
     run_case_study_analysis(
         experiment_path=experiment_path,
@@ -1013,7 +1068,7 @@ def main() -> None:
         n_prototypes=10,
         validation_activations_path=validation_activations_path,
         mode='improved',
-        max_prototype_images=None,
+        max_prototype_images=10000,
     )
 
     run_case_study_analysis(
@@ -1027,7 +1082,7 @@ def main() -> None:
         n_prototypes=10,
         validation_activations_path=validation_activations_path,
         mode='degraded',
-        max_prototype_images=None,
+        max_prototype_images=10000,
     )
 
 
