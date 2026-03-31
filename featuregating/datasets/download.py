@@ -289,53 +289,55 @@ def download_covidquex(data_dir: Path, models_dir: Path) -> None:
 
 def download_thesis_saes(data_dir: Path) -> None:
     """
-    Download thesis-trained SAE checkpoints from Google Drive zips.
+    Download dataset-specific SAE checkpoints into the runtime path.
     """
     print("\n" + "=" * 50)
-    print("Downloading Thesis SAE Checkpoints (Zip Archives)")
+    print("Downloading Dataset-Specific SAE Checkpoints")
     print("=" * 50)
 
-    # Map: 'Folder Name' -> 'Google Drive File ID'
-    # Added &confirm=t to ensure large file download works smoothly
-    sae_zips = {
-        "sae_covidquex": "1Kncxk-tfQQFdLG_mFL5fJ1I-rDdcqLGy&confirm=t",
-        "sae_hyperkvasir": "1nVAvXoJxOKNy7ROMA2XLfAG3diUw5XFf&confirm=t"
+    sae_root = data_dir / "sae_sweep"
+    sae_root.mkdir(exist_ok=True, parents=True)
+    extract_root = data_dir.parent
+
+    sae_archives = {
+        "covidquex": {
+            "file_id": "1K6q89HGpY2GF37XHq3DH5ZuVggOEvYLQ&confirm=t",
+            "archive_name": "sae_sweep_covidquex.zip",
+        },
+        "hyperkvasir": {
+            "file_id": "15UNGf5g2KEZF-LpU4TcAZdQZTAWzlBvN&confirm=t",
+            "archive_name": "sae_sweep_hyperkvasir.zip",
+        },
     }
 
-    for folder_name, file_id in sae_zips.items():
-        target_dir = data_dir / folder_name
+    for dataset_name, archive_info in sae_archives.items():
+        target_dir = sae_root / dataset_name
 
-        # 1. Check if the folder already exists
-        if target_dir.exists():
-            print(f"✓ {folder_name} already exists. Skipping download.")
+        if target_dir.exists() and any(target_dir.rglob("n_images_*.pt")):
+            print(f"{dataset_name} SAE checkpoints already exist at {target_dir}. Skipping download.")
             continue
 
-        print(f"Processing {folder_name}...")
+        print(f"Downloading {dataset_name} SAE archive...")
 
-        # 2. Download the zip file
-        zip_filename = f"{folder_name}.zip"
-        zip_path = data_dir / zip_filename
+        zip_path = data_dir / archive_info["archive_name"]
 
         download_from_gdrive(
-            file_id=file_id,
+            file_id=archive_info["file_id"],
             output_path=zip_path,
         )
 
-        # 3. Extract and cleanup
-        # Assumes the zip was created by zipping the *folder*, not the files inside.
-        # If the zip contains just files, change extract_to=data_dir to extract_to=target_dir
         if zip_path.exists():
-            print(f"Extracting {zip_filename}...")
-            extract_zip(zip_path, data_dir, remove_after=True)
+            print(f"Extracting {zip_path.name}...")
+            extract_zip(zip_path, extract_root, remove_after=True)
 
-            if target_dir.exists():
-                print(f"✓ {folder_name} installed successfully.")
+            if target_dir.exists() and any(target_dir.rglob("n_images_*.pt")):
+                print(f"{dataset_name} SAE checkpoints installed at {target_dir}.")
             else:
-                print(f"⚠ Warning: Extraction finished but {target_dir} was not found.")
+                print(f"Warning: extraction finished but {target_dir} was not found.")
         else:
-            print(f"✗ Failed to download {zip_filename}")
+            print(f"Failed to download {zip_path.name}.")
 
-    print("✓ Thesis SAE setup complete.")
+    print("Dataset-specific SAE setup complete.")
 
 def download_sae_checkpoints(data_dir: Path) -> None:
     """Download SAE checkpoints from HuggingFace for all layers."""
