@@ -1,8 +1,9 @@
 # Feature Gradient Gating
 
-Research code for attribution faithfulness experiments with sparse autoencoder (SAE) feature-gradient gating.
+Code accompanying [Faithful Attribution in Vision Transformers via Feature-Gradient Gating](https://openaccess.thecvf.com/content/CVPR2026W/HOW/papers/Sula_Faithful_Attribution_in_Vision_Transformers_via_Feature-Gradient_Gating_CVPRW_2026_paper.pdf), published at the CVPR 2026 HOW Workshop.
 
-Project page: https://piragi.github.io/thesis
+The repository contains the feature-gradient gating method and the experiment pipeline used to evaluate it across chest X-ray, endoscopy, and natural-image benchmarks.
+
 
 ## Overview
 
