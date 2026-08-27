@@ -4,6 +4,19 @@ Code accompanying [Faithful Attribution in Vision Transformers via Feature-Gradi
 
 The repository contains the feature-gradient gating method and the experiment pipeline used to evaluate it across chest X-ray, endoscopy, and natural-image benchmarks.
 
+## Corrected SaCo Values
+
+An earlier implementation measured perturbed confidence using each perturbed sample's predicted class instead of the original predicted class. This has been fixed; the corrected paper results are shown below. The correction changes the reported SaCo values but not the paper's main findings or conclusions. Other reported metrics are unaffected.
+
+| Method | COVID-QU-Ex | HyperKvasir | ImageNet |
+|---|---:|---:|---:|
+| Rollout | -0.105 | 0.082 | 0.186 |
+| Grad-CAM | -0.096 | 0.336 | 0.323 |
+| TokenTM | 0.334 | 0.347 | 0.448 |
+| Vanilla | 0.380 | 0.448 | 0.425 |
+| Feature-gradient gating | **0.425** | **0.526** | **0.529** |
+| Random | 0.367 | 0.515 | 0.414 |
+| Direct | 0.382 | 0.452 | 0.504 |
 
 ## Overview
 
