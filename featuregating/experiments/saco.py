@@ -156,36 +156,58 @@ def _perturb_bins(bins, image_tensor, patch_size):
     return perturbed
 
 
-def _classify_batch(model, batch_tensor, device):
-    """Run inference on a batch. Returns (predicted_indices, confidences) as numpy arrays."""
+def _target_class_confidences(model, batch_tensor, target_class_idx, device):
+    """Return probabilities for the class whose explanation is evaluated.
+
+    SaCo measures how perturbing each attribution bin changes confidence in the
+    original prediction. Following each perturbed sample's argmax would compare
+    different classes whenever a perturbation changes the prediction.
+    """
     model.eval()
     with torch.no_grad():
         logits = model(batch_tensor.to(device))
         probs = torch.softmax(logits, dim=1)
-        idxs = torch.argmax(probs, dim=1)
-        confs = probs[torch.arange(len(idxs)), idxs]
-    return idxs.cpu().numpy(), confs.cpu().numpy()
+        confidences = probs[:, target_class_idx]
+    return confidences.cpu().numpy()
 
 
-def _measure_bin_drops(perturbed_tensors, original_confidence, model, device):
+def _measure_bin_drops(
+    perturbed_tensors,
+    original_confidence,
+    target_class_idx,
+    model,
+    device,
+):
     """Measure confidence drop when each bin is perturbed. Returns numpy array."""
     if not perturbed_tensors:
         return np.array([])
     batch = torch.stack(perturbed_tensors)
-    _, confidences = _classify_batch(model, batch, device)
+    confidences = _target_class_confidences(
+        model,
+        batch,
+        target_class_idx,
+        device,
+    )
     return original_confidence - confidences
 
 
 def _saco_for_image(result, model, device, n_bins=20):
     """Compute SaCo score for a single image. Returns (saco_score, bin_records)."""
     tensor, raw_attr, confidence = _load_tensor_and_attributions(result)
+    target_class_idx = result.prediction.predicted_class_idx
 
     patch_size = getattr(getattr(model, 'cfg', None), 'patch_size', 16)
     bins = create_attribution_bins(raw_attr, n_bins)
     perturbed = _perturb_bins(bins, tensor, patch_size)
 
     model.eval()
-    drops = _measure_bin_drops(perturbed, confidence, model, device)
+    drops = _measure_bin_drops(
+        perturbed,
+        confidence,
+        target_class_idx,
+        model,
+        device,
+    )
 
     # Sort descending by attribution so that upper-triangle attr_diffs are
     # positive for high-attr bins — gives positive SaCo for concordant data.
